@@ -73,6 +73,7 @@ Teach at the point where a concept becomes relevant. No long theory dumps.
 - Before committing: the developer has confirmed the feature works, then review `git status` and `git diff` for unintended files, secrets and debug code.
 - Stage specific files. Do not use `git add .`.
 - Conventional commit messages (`feat:`, `fix:`, `chore:`, `docs:`, `test:`).
+- Commits must never include a Co-Authored-By line.
 - Order is always: verify, commit, push, merge. Wait for real output at each stage.
 
 ## Environment
@@ -112,9 +113,10 @@ Core first. Do not start any bonus or stand-out item until the full definition o
 ## Documentation
 
 Keep `README.md`, the system design note and the threat model note current as features land, not at the end. Only document behaviour that has actually been implemented and verified.
+
 ## Project status
 
-- Steps 0 to 2 are complete. The environment is installed and verified. This folder is a Git repository with remote `origin` at github.com/rvramakrishna7/urumi-mcp-gateway (private). Do not repeat these steps.
-- Next is Step 3 (architecture), which the developer decides outside this session. Do not start Step 5 or write any code until `docs/architecture.md` exists.
+- Steps 0 to 5 are complete: environment verified, repository on GitHub (remote `origin` at github.com/rvramakrishna7/urumi-mcp-gateway, private), architecture approved in `docs/architecture.md`, and the local k3d cluster `urumi` defined in `cluster/k3d-config.yaml`. Do not repeat these steps.
+- Step 6 (store Helm chart at `charts/store`) is in progress on branch `feature/store-chart`.
 - Always run `git status` and `git branch --show-current` yourself before stating anything about the repository.
 - The brief also requires a recorded demo video and a form submission. Treat both as mandatory final steps.
