@@ -2,7 +2,7 @@
 
 This document records the approved architecture decisions for the team MCP gateway. It is the source of truth for design. If a decision is not written here, it has not been made.
 
-Status: decisions 1 to 14 approved. Two decisions are still open and are listed at the end.
+Status: decisions 1 to 15 approved. Two decisions are still open and are listed at the end.
 
 ## Overview
 
@@ -122,7 +122,7 @@ The two public hostnames are `store.urumi.test` and `gateway.urumi.test`. Locall
 
 ## Store chart
 
-Decisions 9 to 14 describe the Helm chart in `charts/store` (WordPress, WooCommerce and MariaDB in the namespace `store`). Each was checked on the local k3d cluster, and the evidence is noted where it matters.
+Decisions 9 to 15 describe the Helm chart in `charts/store` (WordPress, WooCommerce and MariaDB in the namespace `store`). Each was checked on the local k3d cluster, and the evidence is noted where it matters.
 
 ### 9. WordPress and WooCommerce are installed by a Helm hook Job
 
@@ -194,6 +194,48 @@ WordPress: the startup and readiness probes use `/wp-login.php` (it needs PHP an
 - Alternatives rejected: liveness on `/wp-login.php` (measured above). A TCP check on port 80 was the fallback and was not needed.
 - The hook Job and the test Pod are run-to-completion workloads and have no probes (decision 9).
 
+### 15. The woo-mcp API key is generated in the cluster and installed by the bootstrap Job
+
+The store chart creates a second Secret, `woo-mcp-api`, with the keys `consumer-key` and `consumer-secret` (`ck_` and `cs_` followed by 40 random hex characters, 43 characters in total, which is the width of the `consumer_secret` column). Like `store-credentials`, it is random on first install, reused through `lookup` on upgrade, and kept on `helm uninstall`. It is separate from `store-credentials` so that the MCP server chart can later copy these two values and nothing else.
+
+The bootstrap Job then does two things, after WooCommerce is active (the `shop_manager` role exists only then):
+
+1. It creates the WordPress user `woo-mcp` with the role `shop_manager`. The account password is generated inside PHP, never printed and never stored, so nobody can sign in with it. A wrong role is corrected on every run.
+2. `files/woo-mcp-key.php`, run with `wp eval-file`, reads the key and the secret from the mounted Secret files inside PHP and writes one row to `woocommerce_api_keys`: the hash of the key, the secret, the last seven characters of the key, the user `woo-mcp` and the permission `read_write`. The row is identified by its description, `woo-mcp (managed by the store chart)`, so a repeat run never creates a second key. The script prints only `created`, `unchanged` or `updated: <field names>`. Database errors are not printed, because a MySQL error message can contain the value that was written.
+
+Why this shape: WooCommerce has no REST or WP-CLI command to create a key. Making the Secret the source of truth means the Job needs no access to the Kubernetes API, and a fresh clone needs no click in wp-admin.
+
+**Evidence (local k3d, WooCommerce 11.2.0):**
+
+- First run: `user woo-mcp created`, `woo-mcp api key created`. A second `helm upgrade` logged `user woo-mcp already exists` and `api key unchanged`; the table still had one row (`key_id=1`, `user_id=2`, `read_write`) and there was still one `woo-mcp` user.
+- `helm test` checks the account and the key and prints only names, counts and yes or no: one user, role `shop_manager`, one key row, owned by `woo-mcp`, permission `read_write`, and the stored hash and secret match the Secret.
+- No key or secret value was found in the bootstrap Job log, the WordPress and MariaDB logs, the workload specs or the events. The scan loads the two values from the Secret, first proves that it finds each one hidden in a noisy line, and prints counts only.
+
+**Rotation:**
+
+```bash
+kubectl delete secret woo-mcp-api -n store
+helm upgrade store charts/store -n store -f charts/store/values-local.yaml --wait --timeout 10m
+```
+
+The delete is allowed because of the `keep` policy: the next upgrade generates a new random pair, and the Job updates the existing row. Measured result: the Secret digest changed, the Job logged `api key updated: key,secret`, the table still held one row with `key_id=1`, a request with the new key returned 200, and a request with the old key returned 401 `Consumer key is invalid`. `helm test` still passed. Anything that holds a copy of the Secret must be refreshed after a rotation.
+
+**How the key must be used (requirement for the woo-mcp client):**
+
+- Over plain HTTP WooCommerce ignores Basic authentication: `WC_REST_Authentication` tries it only when WordPress reports SSL (`is_ssl()`), and falls back to OAuth 1.0a otherwise. Verified: Basic with the real key over HTTP returned 401. The same request with the header `X-Forwarded-Proto: https` returned 200, because the official image then marks the request as HTTPS. That is why sending a forged header was rejected as a design: it would only pretend that TLS exists and put the secret on the network.
+- OAuth 1.0a with `HMAC-SHA256` keeps the secret off the network: only the signature travels. The signature is computed over the **public** home URL (`get_home_url()`), not over the host that was called. Verified: a request sent to the in-cluster Service and signed for `http://store.urumi.test` returned 200 with no redirect; the same request signed for the Service URL returned 401 `Invalid signature`; a wrong secret returned 401.
+- **All `oauth_*` parameters must be sent in the `Authorization: OAuth ...` header, and the URL must carry only the real query parameters.** WooCommerce also accepts them in the query string, but the Apache access log of the WordPress pod then records the request line. Measured: five probe requests that put the key in the query string or in the Basic user field left the key in the log (the secret was never logged); header-mode requests, including a failed one, left neither value in the new log lines. Verified: header mode returned 200 with only `per_page=1` in the URL.
+- Fallback if this requirement is ever not met: the consumer key is an identifier, like a user name. The secret is never logged, a request with the key but no valid signature returns 401, and WooCommerce rejects a reused nonce within its 15-minute window, so a logged request cannot be replayed.
+
+**Permissions of the key.** A WooCommerce key can only be `read`, `write` or `read_write`, so it cannot be limited per tool. The user's role is the real limit, which is why the account is a `shop_manager` and not the administrator. Measured for `woo-mcp`: it can edit and publish products and edit all orders; it cannot manage options, install or activate plugins, or create, delete or promote users, and it cannot edit, promote or delete the administrator account. WooCommerce does grant shop managers `edit_users` at run time (`wc_shop_manager_has_capability`) and limits it to customers (`wc_modify_map_meta_cap`), so the key can edit customer accounts. The five tools of woo-mcp do not expose customers, and a per-tool or per-role limit belongs to the gateway, not to the key.
+
+**Tradeoffs:**
+
+- WooCommerce stores the consumer secret in **plaintext** in the database, because it needs the secret to verify an HMAC signature. Anyone who can read the table `woocommerce_api_keys` can sign requests as `woo-mcp`. The secret also sits in the Kubernetes Secret and, base64 encoded, in the Helm release metadata (the same as decision 10).
+- The chart writes into a WooCommerce table directly. The schema is WooCommerce internals, which is acceptable because the plugin version is pinned and the `helm test` read-back would fail if the layout changed.
+- Not tested: whether a JSON request body is covered by an OAuth 1.0a signature. The OAuth 1.0a rules only cover form-encoded bodies, so a JSON body is probably not signed.
+- Alternatives rejected: Basic authentication with a forged `X-Forwarded-Proto` header; TLS inside the cluster (too large for this step, and TLS is undecided); WordPress Application Passwords (disabled over plain HTTP, and not limited by permission); direct database access from the MCP server (decision 6); writing the Secret from the Job (it would need Kubernetes API access and RBAC).
+
 ## Known limitations
 
 - The startup probe still uses `/wp-login.php`. If MariaDB is down for more than five minutes (60 checks, 5 seconds apart) while the WordPress container is starting, the kubelet kills and restarts it. This follows from the probe configuration and was not tested.
@@ -203,6 +245,7 @@ WordPress: the startup and readiness probes use `/wp-login.php` (it needs PHP an
 - `values-prod.yaml` is only rendered, not deployed. The domain and email are placeholders, and the volume sizes and resource numbers are untested starting points.
 - Deviation from the brief: the brief asks for readiness and liveness checks on every workload. Every long-running workload (WordPress and MariaDB) has both, but the bootstrap Job and the `helm test` Pod are run-to-completion and have no probes. The Job is bounded by `activeDeadlineSeconds`, `backoffLimit` and resource limits, and the test Pod by `activeDeadlineSeconds`, `restartPolicy: Never` and resource limits.
 - HPOS (custom order tables) is left at the WooCommerce default. The final value is `yes`. WooCommerce enables it for a new shop on the first full request after the install, not during the CLI activation, so the bootstrap read-back shows `no` and a later check shows `yes`. WP-CLI, WC-CLI and the REST API work with either storage, so the store checks do not depend on it.
+- The first install path of the API key provisioning (random generation on an empty cluster) was only rendered with `helm lint` and `helm template`, not run. It is covered by the fresh-install test in Step 19. The upgrade, repeat and rotation paths were run.
 
 ## Credential domains
 
@@ -213,7 +256,7 @@ Two separate kinds of credential exist and they never mix.
 | User API key | MCP client and gateway | SHA-256 hash in PostgreSQL | The user, once |
 | Dashboard session | Browser and gateway | httpOnly cookie | Nobody; not readable by scripts |
 | Upstream credential | Gateway and one upstream MCP server | Gateway side only | Admin when entering it; never returned afterwards |
-| WooCommerce consumer key and secret | woo-mcp and WordPress | Kubernetes Secret | woo-mcp only |
+| WooCommerce consumer key and secret | woo-mcp and WordPress; only an OAuth 1.0a signature in the `Authorization` header travels (decision 15) | Kubernetes Secret `woo-mcp-api` in `store` (source of truth); the WordPress database holds the key hash and the secret in plaintext | woo-mcp, and the store bootstrap Job and test Pod through mounted files; anyone who can read the Secret or the table `woocommerce_api_keys` |
 
 The gateway never forwards a user's API key to an upstream, and never returns an upstream credential to a browser or an MCP client.
 

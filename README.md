@@ -79,3 +79,10 @@ kubectl logs -n store pod/store-checks
 ```
 
 The test Pod is read-only. It lists the products and orders with WP-CLI and WC-CLI (without customer details), counts the orders created today, and checks that the storefront is live and shows every published product.
+
+It also checks the service account that the MCP server will use. The bootstrap Job creates the WordPress user `woo-mcp` (role Shop manager) and a Read/Write WooCommerce REST API key for it, generated in the cluster and kept in the Secret `woo-mcp-api` (`docs/architecture.md`, decision 15). The checks print only names, counts and yes or no answers, never the key or the secret:
+
+- exactly one `woo-mcp` user, with the role `shop_manager`
+- the capabilities the tools need are present, and the capabilities for managing plugins, options and users, or editing the administrator, are absent
+- exactly one API key with the managed description, owned by `woo-mcp`, with the permission `read_write`
+- the stored key and secret match the Secret
