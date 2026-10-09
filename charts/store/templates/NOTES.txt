@@ -1,0 +1,22 @@
+The store is installed in namespace "{{ .Release.Namespace }}".
+
+Storefront:  {{ include "store.publicUrl" . }}/
+Admin:       {{ include "store.publicUrl" . }}/wp-admin/   (user: {{ .Values.store.admin.username }})
+
+The admin password is generated on first install and kept in the Secret "{{ include "store.secretName" . }}".
+Read it in your own terminal (this prints it, so do not paste it anywhere):
+
+  kubectl get secret {{ include "store.secretName" . }} -n {{ .Release.Namespace }} -o jsonpath='{.data.wordpress-admin-password}' | base64 -d; echo
+
+WordPress and WooCommerce are installed and configured by the "store-bootstrap" Job,
+which runs after every install and upgrade. Follow it with:
+
+  kubectl logs -n {{ .Release.Namespace }} job/store-bootstrap
+
+Run the read-only store checks with:
+
+  helm test {{ .Release.Name }} -n {{ .Release.Namespace }}
+{{- if .Values.wordpress.loopbackHostAlias }}
+
+Local access: {{ .Values.store.host }} must be mapped to 127.0.0.1 in your hosts file (docs/architecture.md, decision 8).
+{{- end }}

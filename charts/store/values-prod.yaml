@@ -1,0 +1,43 @@
+# Overrides for a production-like k3s VPS.
+# Use with: helm upgrade --install store charts/store -n store --create-namespace -f charts/store/values-prod.yaml
+#
+# Everything here is a placeholder until the chart is deployed to a real VPS (Step 20):
+# the domain, the sizes and the resource numbers are untested starting points.
+# Credentials are not set here. The chart generates them inside the cluster on first install
+# (see templates/secret.yaml). To supply your own, pass them at install time with --set-file, never in this file.
+
+store:
+  # Replace with a real domain whose DNS A record points at the VPS.
+  host: store.example.com
+  # The chart does not configure Ingress TLS yet, so the scheme stays http.
+  # Switch to https only together with a TLS section on the Ingress (for example cert-manager).
+  scheme: http
+  admin:
+    email: admin@example.com
+
+mariadb:
+  persistence:
+    size: 10Gi
+    # Empty means the cluster default StorageClass, which is local-path on k3s.
+    storageClass: ""
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      cpu: "2"
+      memory: 1Gi
+
+wordpress:
+  persistence:
+    size: 10Gi
+    storageClass: ""
+  # The public hostname resolves through real DNS on the VPS, so no hosts-file workaround is needed.
+  loopbackHostAlias: false
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      cpu: "2"
+      memory: 1Gi
