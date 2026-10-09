@@ -56,7 +56,10 @@ else
 fi
 
 # The real password is applied once. Later runs leave it alone so a password changed in wp-admin is not reset.
-if [ -z "$(wpcli option get "$ADMIN_PASSWORD_MARKER" 2>/dev/null || true)" ]; then
+# The option list is captured first so that a failing WP-CLI call stops the script (set -e) instead of being
+# read as "marker missing", which would overwrite a password changed in wp-admin.
+marker_options="$(wpcli option list --search="$ADMIN_PASSWORD_MARKER" --field=option_name)"
+if ! printf '%s\n' "$marker_options" | grep -qx "$ADMIN_PASSWORD_MARKER"; then
   log "setting the admin password from the Secret"
   wpcli eval 'wp_set_password(trim(file_get_contents(getenv("ADMIN_PASSWORD_FILE"))), get_user_by("login", getenv("ADMIN_USER"))->ID);'
   password_check="$(wpcli eval '$u = get_user_by("login", getenv("ADMIN_USER")); echo wp_check_password(trim(file_get_contents(getenv("ADMIN_PASSWORD_FILE"))), $u->user_pass, $u->ID) ? "password-ok" : "MISMATCH";')"
@@ -120,7 +123,10 @@ wpcli wc payment_gateway update cod --enabled=true --user="$ADMIN_USER" >/dev/nu
 log "cash on delivery enabled"
 
 # Zone 0 is the built-in "locations not covered by your other zones" zone, so free shipping applies everywhere.
-if wpcli wc shipping_zone_method list 0 --user="$ADMIN_USER" --field=method_id | grep -qx free_shipping; then
+# The list is captured first so that a failing WP-CLI call stops the script (set -e) instead of being read as
+# "method missing", which would add a duplicate method.
+zone_methods="$(wpcli wc shipping_zone_method list 0 --user="$ADMIN_USER" --field=method_id)"
+if printf '%s\n' "$zone_methods" | grep -qx free_shipping; then
   log "free shipping already present in zone 0"
 else
   wpcli wc shipping_zone_method create 0 --method_id=free_shipping --user="$ADMIN_USER" >/dev/null

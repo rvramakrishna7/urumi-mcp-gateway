@@ -53,9 +53,13 @@ spec:
               port: http
             periodSeconds: 10
             timeoutSeconds: 5
+          # Liveness must not depend on PHP or the database, or a database outage would restart a healthy
+          # WordPress pod. This is a static core file that Apache serves directly (see .htaccess: existing
+          # files bypass index.php). Readiness keeps using wp-login.php, so an outage only removes the pod
+          # from the Service.
           livenessProbe:
             httpGet:
-              path: /wp-login.php
+              path: /wp-includes/images/blank.gif
               port: http
             periodSeconds: 20
             timeoutSeconds: 5

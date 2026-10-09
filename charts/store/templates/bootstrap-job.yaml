@@ -38,12 +38,6 @@ spec:
                 matchLabels:
                   {{- include "store.selectorLabels" (dict "root" . "component" "wordpress") | nindent 18 }}
               topologyKey: kubernetes.io/hostname
-      {{- if .Values.wordpress.loopbackHostAlias }}
-      hostAliases:
-        - ip: "127.0.0.1"
-          hostnames:
-            - {{ .Values.store.host | quote }}
-      {{- end }}
       containers:
         - name: bootstrap
           image: "{{ .Values.bootstrap.image.repository }}:{{ .Values.bootstrap.image.tag }}"
@@ -91,9 +85,14 @@ spec:
         - name: scripts
           configMap:
             name: store-bootstrap
+        # Only the admin password is mounted. The database passwords are not needed as files:
+        # the database password reaches wp-config.php through an environment variable.
         - name: credentials
           secret:
             secretName: {{ include "store.secretName" . }}
             defaultMode: 0444
+            items:
+              - key: wordpress-admin-password
+                path: wordpress-admin-password
         - name: tmp
           emptyDir: {}
