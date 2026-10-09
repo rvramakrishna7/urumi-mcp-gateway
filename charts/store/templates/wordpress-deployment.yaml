@@ -1,0 +1,68 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: wordpress
+  labels:
+    {{- include "store.labels" . | nindent 4 }}
+    app.kubernetes.io/component: wordpress
+spec:
+  replicas: 1
+  # The content volume is ReadWriteOnce and WordPress files cannot be shared by two pods,
+  # so the old pod must stop before the new one starts.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "store.selectorLabels" (dict "root" . "component" "wordpress") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "store.labels" . | nindent 8 }}
+        app.kubernetes.io/component: wordpress
+    spec:
+      {{- if .Values.wordpress.loopbackHostAlias }}
+      hostAliases:
+        - ip: "127.0.0.1"
+          hostnames:
+            - {{ .Values.store.host | quote }}
+      {{- end }}
+      containers:
+        - name: wordpress
+          image: "{{ .Values.wordpress.image.repository }}:{{ .Values.wordpress.image.tag }}"
+          imagePullPolicy: {{ .Values.wordpress.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: 80
+          # WORDPRESS_CONFIG_EXTRA is evaluated at runtime by wp-config.php of the official image,
+          # so the public URL follows the values and not a copy stored in the database.
+          env:
+            {{- include "store.wordpressEnv" . | nindent 12 }}
+          volumeMounts:
+            - name: content
+              mountPath: /var/www/html
+          # First start copies WordPress core files onto the volume, which can take a while.
+          startupProbe:
+            httpGet:
+              path: /wp-login.php
+              port: http
+            periodSeconds: 5
+            failureThreshold: 60
+          readinessProbe:
+            httpGet:
+              path: /wp-login.php
+              port: http
+            periodSeconds: 10
+            timeoutSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /wp-login.php
+              port: http
+            periodSeconds: 20
+            timeoutSeconds: 5
+            failureThreshold: 3
+          resources:
+            {{- toYaml .Values.wordpress.resources | nindent 12 }}
+      volumes:
+        - name: content
+          persistentVolumeClaim:
+            claimName: wordpress-data

@@ -1,0 +1,18 @@
+# Overrides for the local k3d cluster (cluster/k3d-config.yaml).
+# Use with: helm upgrade --install store charts/store -n store --create-namespace -f charts/store/values-local.yaml
+# The hostname must be mapped to 127.0.0.1 in the Windows hosts file (docs/architecture.md, decision 8).
+
+store:
+  host: store.urumi.test
+  scheme: http
+  admin:
+    email: admin@urumi.test
+
+mariadb:
+  persistence:
+    size: 2Gi
+
+wordpress:
+  persistence:
+    size: 2Gi
+  loopbackHostAlias: true

@@ -1,0 +1,10 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: store-bootstrap
+  labels:
+    {{- include "store.labels" . | nindent 4 }}
+    app.kubernetes.io/component: bootstrap
+data:
+  bootstrap.sh: |
+    {{- .Files.Get "files/bootstrap.sh" | nindent 4 }}

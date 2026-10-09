@@ -1,0 +1,81 @@
+{{- /*
+"helm test" runs the read-only store checks (files/checks.sh) in a short-lived Pod with the official WP-CLI image.
+The Pod mounts the content volume read-only. It has no probes: like the bootstrap Job it is a run-to-completion
+workload, bounded by activeDeadlineSeconds and resource limits.
+*/ -}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: store-checks
+  labels:
+    {{- include "store.labels" . | nindent 4 }}
+    app.kubernetes.io/component: test
+  annotations:
+    helm.sh/hook: test
+    helm.sh/hook-weight: "-1"
+    helm.sh/hook-delete-policy: before-hook-creation
+data:
+  checks.sh: |
+    {{- .Files.Get "files/checks.sh" | nindent 4 }}
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: store-checks
+  labels:
+    {{- include "store.labels" . | nindent 4 }}
+    app.kubernetes.io/component: test
+  annotations:
+    helm.sh/hook: test
+    helm.sh/hook-weight: "0"
+    # The previous test Pod is replaced on the next run, so its logs stay available until then.
+    helm.sh/hook-delete-policy: before-hook-creation
+spec:
+  restartPolicy: Never
+  activeDeadlineSeconds: 300
+  securityContext:
+    runAsUser: 33
+    runAsGroup: 33
+  # The content volume is ReadWriteOnce, so the Pod must run on the node that already mounts it.
+  affinity:
+    podAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+        - labelSelector:
+            matchLabels:
+              {{- include "store.selectorLabels" (dict "root" . "component" "wordpress") | nindent 14 }}
+          topologyKey: kubernetes.io/hostname
+  containers:
+    - name: checks
+      image: "{{ .Values.bootstrap.image.repository }}:{{ .Values.bootstrap.image.tag }}"
+      imagePullPolicy: {{ .Values.bootstrap.image.pullPolicy }}
+      command: ["sh", "/scripts/checks.sh"]
+      env:
+        {{- include "store.wordpressEnv" . | nindent 8 }}
+        - name: HOME
+          value: /tmp
+        - name: WP_CLI_CACHE_DIR
+          value: /tmp/wp-cli-cache
+        - name: ADMIN_USER
+          value: {{ .Values.store.admin.username | quote }}
+        - name: STORE_HOST
+          value: {{ required "store.host is required" .Values.store.host | quote }}
+      volumeMounts:
+        - name: content
+          mountPath: /var/www/html
+          readOnly: true
+        - name: scripts
+          mountPath: /scripts
+          readOnly: true
+        - name: tmp
+          mountPath: /tmp
+      resources:
+        {{- toYaml .Values.bootstrap.resources | nindent 8 }}
+  volumes:
+    - name: content
+      persistentVolumeClaim:
+        claimName: wordpress-data
+    - name: scripts
+      configMap:
+        name: store-checks
+    - name: tmp
+      emptyDir: {}

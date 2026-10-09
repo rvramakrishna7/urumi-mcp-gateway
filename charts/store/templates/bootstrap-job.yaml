@@ -1,0 +1,99 @@
+{{- /*
+Installs and configures WordPress and WooCommerce with the official WP-CLI image, so the store needs no manual
+clicks in wp-admin and no custom image. It runs after every install and upgrade; the script is idempotent.
+The hook Job has no probes: it is a short-lived run-to-completion workload bounded by activeDeadlineSeconds,
+resource limits and backoffLimit instead.
+*/ -}}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: store-bootstrap
+  labels:
+    {{- include "store.labels" . | nindent 4 }}
+    app.kubernetes.io/component: bootstrap
+  annotations:
+    helm.sh/hook: post-install,post-upgrade
+    helm.sh/hook-weight: "0"
+    # The previous Job is replaced on the next run, so its logs stay available until then.
+    helm.sh/hook-delete-policy: before-hook-creation
+spec:
+  backoffLimit: 2
+  activeDeadlineSeconds: 900
+  template:
+    metadata:
+      labels:
+        {{- include "store.labels" . | nindent 8 }}
+        app.kubernetes.io/component: bootstrap
+    spec:
+      restartPolicy: Never
+      # WP-CLI image runs as uid 82, the WordPress Apache image as uid 33. Run as 33 so file ownership matches.
+      securityContext:
+        runAsUser: 33
+        runAsGroup: 33
+      # The content volume is ReadWriteOnce, so the Job must run on the node that already mounts it.
+      affinity:
+        podAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchLabels:
+                  {{- include "store.selectorLabels" (dict "root" . "component" "wordpress") | nindent 18 }}
+              topologyKey: kubernetes.io/hostname
+      {{- if .Values.wordpress.loopbackHostAlias }}
+      hostAliases:
+        - ip: "127.0.0.1"
+          hostnames:
+            - {{ .Values.store.host | quote }}
+      {{- end }}
+      containers:
+        - name: bootstrap
+          image: "{{ .Values.bootstrap.image.repository }}:{{ .Values.bootstrap.image.tag }}"
+          imagePullPolicy: {{ .Values.bootstrap.image.pullPolicy }}
+          command: ["sh", "/scripts/bootstrap.sh"]
+          env:
+            {{- include "store.wordpressEnv" . | nindent 12 }}
+            - name: HOME
+              value: /tmp
+            - name: WP_CLI_CACHE_DIR
+              value: /tmp/wp-cli-cache
+            - name: SITE_URL
+              value: {{ include "store.publicUrl" . | quote }}
+            - name: SITE_TITLE
+              value: {{ .Values.store.title | quote }}
+            - name: ADMIN_USER
+              value: {{ .Values.store.admin.username | quote }}
+            - name: ADMIN_EMAIL
+              value: {{ required "store.admin.email is required" .Values.store.admin.email | quote }}
+            - name: STORE_CURRENCY
+              value: {{ .Values.store.currency | quote }}
+            - name: STORE_TIMEZONE
+              value: {{ .Values.store.timezone | quote }}
+            - name: STORE_COUNTRY
+              value: {{ .Values.store.country | quote }}
+            - name: WOOCOMMERCE_VERSION
+              value: {{ .Values.woocommerce.version | quote }}
+          volumeMounts:
+            - name: content
+              mountPath: /var/www/html
+            - name: scripts
+              mountPath: /scripts
+              readOnly: true
+            - name: credentials
+              mountPath: /secrets
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+          resources:
+            {{- toYaml .Values.bootstrap.resources | nindent 12 }}
+      volumes:
+        - name: content
+          persistentVolumeClaim:
+            claimName: wordpress-data
+        - name: scripts
+          configMap:
+            name: store-bootstrap
+        - name: credentials
+          secret:
+            secretName: {{ include "store.secretName" . }}
+            defaultMode: 0444
+        - name: tmp
+          emptyDir: {}
