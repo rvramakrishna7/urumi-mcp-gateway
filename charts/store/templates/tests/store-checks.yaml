@@ -59,12 +59,21 @@ spec:
           value: {{ .Values.store.admin.username | quote }}
         - name: STORE_HOST
           value: {{ required "store.host is required" .Values.store.host | quote }}
+        - name: WOO_MCP_USER
+          value: {{ .Values.wooMcp.username | quote }}
+        - name: WOO_MCP_KEY_FILE
+          value: /woo-mcp-api/consumer-key
+        - name: WOO_MCP_SECRET_FILE
+          value: /woo-mcp-api/consumer-secret
       volumeMounts:
         - name: content
           mountPath: /var/www/html
           readOnly: true
         - name: scripts
           mountPath: /scripts
+          readOnly: true
+        - name: woo-mcp-api
+          mountPath: /woo-mcp-api
           readOnly: true
         - name: tmp
           mountPath: /tmp
@@ -77,5 +86,15 @@ spec:
     - name: scripts
       configMap:
         name: store-checks
+    # Read only to compare with what WooCommerce stores. checks.sh never prints the values.
+    - name: woo-mcp-api
+      secret:
+        secretName: {{ include "store.wooMcpSecretName" . }}
+        defaultMode: 0444
+        items:
+          - key: consumer-key
+            path: consumer-key
+          - key: consumer-secret
+            path: consumer-secret
     - name: tmp
       emptyDir: {}

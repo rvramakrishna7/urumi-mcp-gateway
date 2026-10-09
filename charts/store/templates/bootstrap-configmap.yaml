@@ -8,3 +8,5 @@ metadata:
 data:
   bootstrap.sh: |
     {{- .Files.Get "files/bootstrap.sh" | nindent 4 }}
+  woo-mcp-key.php: |
+    {{- .Files.Get "files/woo-mcp-key.php" | nindent 4 }}

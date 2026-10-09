@@ -76,3 +76,24 @@ Order: explicit override from values, then the value already stored in the clust
 {{- randAlphaNum 32 | b64enc -}}
 {{- end -}}
 {{- end -}}
+
+{{/*
+Name of the Secret that holds the WooCommerce REST API key of the woo-mcp server.
+It is separate from the store credentials so that the MCP server chart can copy these two values and nothing else.
+*/}}
+{{- define "store.wooMcpSecretName" -}}
+woo-mcp-api
+{{- end -}}
+
+{{/*
+Base64 value for one WooCommerce API credential: the prefix followed by 40 lowercase hex characters
+(43 characters in total, the width of the consumer_secret column). The value already stored in the cluster wins.
+Call with a dict: (dict "old" <map> "key" <string> "prefix" <string>).
+*/}}
+{{- define "store.wooMcpApiValue" -}}
+{{- if and .old (hasKey .old .key) -}}
+{{- index .old .key -}}
+{{- else -}}
+{{- printf "%s%s" .prefix (randAlphaNum 32 | sha1sum) | b64enc -}}
+{{- end -}}
+{{- end -}}

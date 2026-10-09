@@ -63,4 +63,51 @@ foreach ($products as $product) {
 exit($failures > 0 ? 1 : 0);
 '
 
+# The woo-mcp service account and its REST API key. Only names, counts and yes/no answers are printed.
+# The key and the secret are read from the mounted Secret files inside PHP and compared with what WooCommerce stores.
+log "woo-mcp account and API key:"
+wpcli eval '
+$failures = 0;
+$check = function ($ok, $message) use (&$failures) {
+  echo ($ok ? "ok:   " : "FAIL: ") . $message . "\n";
+  if (!$ok) {
+    $failures++;
+  }
+};
+$login = getenv("WOO_MCP_USER");
+$users = get_users(array("login" => $login));
+$check(count($users) === 1, "users named " . $login . ": " . count($users));
+if (count($users) === 1) {
+  $user = $users[0];
+  $check($user->roles === array("shop_manager"), "roles: " . implode(",", $user->roles));
+  foreach (array("edit_products", "publish_products", "edit_shop_orders", "edit_others_shop_orders") as $cap) {
+    $check(user_can($user, $cap), "can " . $cap);
+  }
+  foreach (array("manage_options", "install_plugins", "activate_plugins", "create_users", "delete_users", "promote_users") as $cap) {
+    $check(!user_can($user, $cap), "cannot " . $cap);
+  }
+  // WooCommerce lets shop managers edit customer accounts, but not the administrator.
+  $admin = get_user_by("login", getenv("ADMIN_USER"));
+  $check($admin !== false, "administrator account found");
+  if ($admin) {
+    $check(!user_can($user, "edit_user", $admin->ID), "cannot edit the administrator account");
+    $check(!user_can($user, "promote_user", $admin->ID), "cannot promote the administrator account");
+    $check(!user_can($user, "delete_user", $admin->ID), "cannot delete the administrator account");
+  }
+  global $wpdb;
+  $table = $wpdb->prefix . "woocommerce_api_keys";
+  $rows = $wpdb->get_results($wpdb->prepare("SELECT user_id, permissions, consumer_key, consumer_secret FROM {$table} WHERE description = %s", "woo-mcp (managed by the store chart)"));
+  $check(count($rows) === 1, "API keys with the managed description: " . count($rows));
+  if (count($rows) === 1) {
+    $key = trim(file_get_contents(getenv("WOO_MCP_KEY_FILE")));
+    $secret = trim(file_get_contents(getenv("WOO_MCP_SECRET_FILE")));
+    $check((int) $rows[0]->user_id === (int) $user->ID, "API key belongs to " . $login);
+    $check($rows[0]->permissions === "read_write", "API key permissions: " . $rows[0]->permissions);
+    $check(hash_equals($rows[0]->consumer_key, wc_api_hash($key)), "stored key matches the Secret");
+    $check(hash_equals($rows[0]->consumer_secret, $secret), "stored secret matches the Secret");
+  }
+}
+exit($failures > 0 ? 1 : 0);
+'
+
 log "all checks passed"

@@ -65,6 +65,14 @@ spec:
               value: {{ .Values.store.country | quote }}
             - name: WOOCOMMERCE_VERSION
               value: {{ .Values.woocommerce.version | quote }}
+            - name: WOO_MCP_USER
+              value: {{ .Values.wooMcp.username | quote }}
+            - name: WOO_MCP_USER_EMAIL
+              value: {{ printf "%s@%s" .Values.wooMcp.username (required "store.host is required" .Values.store.host) | quote }}
+            - name: WOO_MCP_KEY_FILE
+              value: /woo-mcp-api/consumer-key
+            - name: WOO_MCP_SECRET_FILE
+              value: /woo-mcp-api/consumer-secret
           volumeMounts:
             - name: content
               mountPath: /var/www/html
@@ -73,6 +81,9 @@ spec:
               readOnly: true
             - name: credentials
               mountPath: /secrets
+              readOnly: true
+            - name: woo-mcp-api
+              mountPath: /woo-mcp-api
               readOnly: true
             - name: tmp
               mountPath: /tmp
@@ -94,5 +105,15 @@ spec:
             items:
               - key: wordpress-admin-password
                 path: wordpress-admin-password
+        # The WooCommerce API key of the woo-mcp user. woo-mcp-key.php reads it from these files.
+        - name: woo-mcp-api
+          secret:
+            secretName: {{ include "store.wooMcpSecretName" . }}
+            defaultMode: 0444
+            items:
+              - key: consumer-key
+                path: consumer-key
+              - key: consumer-secret
+                path: consumer-secret
         - name: tmp
           emptyDir: {}

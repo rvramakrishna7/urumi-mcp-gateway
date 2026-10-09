@@ -133,6 +133,27 @@ else
   log "free shipping added to zone 0"
 fi
 
+# Dedicated service account and REST API key for the woo-mcp server. The user's role comes from WooCommerce, so
+# this must run after the plugin is active. The account password is random, discarded inside PHP and never
+# printed, so nobody can sign in with it. The user list is captured first so that a failing WP-CLI call stops
+# the script (set -e) instead of being read as "user missing".
+user_logins="$(wpcli user list --field=user_login)"
+if printf '%s\n' "$user_logins" | grep -qx "$WOO_MCP_USER"; then
+  log "user $WOO_MCP_USER already exists"
+else
+  wpcli eval '$id = wp_insert_user(array("user_login" => getenv("WOO_MCP_USER"), "user_email" => getenv("WOO_MCP_USER_EMAIL"), "user_pass" => wp_generate_password(64, true, true), "role" => "shop_manager", "display_name" => "woo-mcp service account")); if (is_wp_error($id)) { fwrite(STDERR, "user creation failed: " . $id->get_error_code() . "\n"); exit(1); }'
+  log "user $WOO_MCP_USER created"
+fi
+user_roles="$(wpcli user get "$WOO_MCP_USER" --field=roles)"
+if [ "$user_roles" = "shop_manager" ]; then
+  log "user $WOO_MCP_USER has role shop_manager"
+else
+  wpcli user set-role "$WOO_MCP_USER" shop_manager
+  log "role of user $WOO_MCP_USER corrected to shop_manager"
+fi
+key_result="$(wpcli eval-file /scripts/woo-mcp-key.php)"
+log "woo-mcp $key_result"
+
 # Read back everything the script configures. None of these values is a secret.
 log "---- read back ----"
 for option in woocommerce_coming_soon woocommerce_store_pages_only woocommerce_allow_tracking woocommerce_currency \

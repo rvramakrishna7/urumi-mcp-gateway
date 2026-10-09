@@ -21,6 +21,11 @@ woocommerce:
   # Pinned so every environment gets the same version. Changing it upgrades or downgrades on the next helm upgrade.
   version: "11.2.0"
 
+wooMcp:
+  # Dedicated WordPress user for the woo-mcp server. Its role, the key description and the key permissions are
+  # fixed in files/bootstrap.sh and files/woo-mcp-key.php (docs/architecture.md, decision 15).
+  username: woo-mcp
+
 bootstrap:
   image:
     repository: wordpress
