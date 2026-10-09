@@ -2,7 +2,7 @@
 
 This document records the approved architecture decisions for the team MCP gateway. It is the source of truth for design. If a decision is not written here, it has not been made.
 
-Status: decisions 1 to 7 approved. Three decisions are still open and are listed at the end.
+Status: decisions 1 to 8 approved. Two decisions are still open and are listed at the end.
 
 ## Overview
 
@@ -60,7 +60,7 @@ The agent is a module inside the backend. It can reach upstream tools only throu
 
 ### 1c. Three namespaces and three Helm charts
 
-Namespaces `store`, `mcp-servers` and `gateway`, each deployed by its own chart and release.
+Namespaces `store`, `mcp-servers` and `gateway`, each deployed by its own chart and release. Each namespace is created by `helm install --create-namespace`, so deployment stays Helm-only.
 
 - Why: namespaces make the public and internal boundary explicit and give NetworkPolicy a clean target. Separate releases can be upgraded and rolled back independently.
 - Tradeoff: three `helm install` commands instead of one.
@@ -110,6 +110,16 @@ One PostgreSQL pod with a PersistentVolumeClaim.
 - Why both: the first layer alone stops external traffic but still lets any pod in the cluster call the MCP servers. The requirement is that only the gateway can.
 - k3s enforces NetworkPolicy without extra setup, locally (k3d) and on the VPS.
 
+### 8. Local domain approach: hosts file entries
+
+The two public hostnames are `store.urumi.test` and `gateway.urumi.test`. Locally, the Windows hosts file maps both to `127.0.0.1`, and k3d maps host ports 80 and 443 to the Traefik ingress controller. Production uses real DNS records for the store host and the gateway host; the hostnames are set only through Helm values (`values-local.yaml` and `values-prod.yaml`).
+
+- Why: no extra software, and `.test` is reserved (RFC 6761), so it never collides with a real domain. URLs stay stable and Ingress routes by host, exactly as in production.
+- Tradeoff: one manual administrator edit of the hosts file per developer machine, and the hosts file has no wildcards, so each new hostname needs its own line.
+- Alternatives rejected:
+  - `*.localhost` hostnames: no setup, but not resolved by Node and some CLI tools on Windows, so an external MCP client could fail to connect.
+  - nip.io style DNS: needs internet DNS and a third-party service, and some home routers block DNS answers that point to 127.0.0.1.
+
 ## Credential domains
 
 Two separate kinds of credential exist and they never mix.
@@ -142,7 +152,6 @@ Tool listing asks every enabled upstream in parallel, each with its own timeout.
 
 | Decision | Decide before |
 |---|---|
-| Local domain approach for the storefront and dashboard URLs | Step 5 |
 | Which two additional MCP servers to connect | Step 15 |
 | LLM provider for the chat agent | Step 14 |
 
