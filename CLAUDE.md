@@ -116,7 +116,7 @@ Keep `README.md`, the system design note and the threat model note current as fe
 
 ## Project status
 
-- Steps 0 to 5 are complete: environment verified, repository on GitHub (remote `origin` at github.com/rvramakrishna7/urumi-mcp-gateway, private), architecture approved in `docs/architecture.md`, and the local k3d cluster `urumi` defined in `cluster/k3d-config.yaml`. Do not repeat these steps.
-- Step 6 (store Helm chart at `charts/store`) is in progress on branch `feature/store-chart`.
+- Steps 0 to 6 are complete: environment verified, repository on GitHub (remote `origin` at github.com/rvramakrishna7/urumi-mcp-gateway, private), architecture approved in `docs/architecture.md`, the local k3d cluster `urumi` defined in `cluster/k3d-config.yaml`, and the store Helm chart at `charts/store` (WordPress, WooCommerce and MariaDB), which passed TEST-001 to TEST-005. Do not repeat these steps.
+- Step 7 (WooCommerce MCP server) is next. Do not start it until the developer says so.
 - Always run `git status` and `git branch --show-current` yourself before stating anything about the repository.
 - The brief also requires a recorded demo video and a form submission. Treat both as mandatory final steps.
