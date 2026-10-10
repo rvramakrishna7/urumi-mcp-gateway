@@ -91,7 +91,7 @@ It also checks the service account that the MCP server will use. The bootstrap J
 
 woo-mcp is the MCP server of this repository that exposes the store as tools over Streamable HTTP. It runs inside the cluster, has no Ingress, and is called with a bearer token. Install the store first (the sections above), because woo-mcp copies its WooCommerce key from the store. The design is in `docs/architecture.md`, decisions 16 to 23.
 
-The five tools are `list_products`, `create_product`, `list_orders`, `get_order` and `update_order_status`. `list_orders` takes `date_from` and `date_to` as `today`, `yesterday` or `YYYY-MM-DD`, in the store timezone. No tool returns a customer's email, phone, address or note.
+The five tools are `list_products`, `create_product`, `list_orders`, `get_order` and `update_order_status`. `list_orders` takes `date_from` and `date_to` as `today`, `yesterday` or `YYYY-MM-DD`, in the store timezone. No tool returns a customer's email, phone, address or note. `create_product` accepts plain text only: a name, description or sku that contains `<` or `>` is rejected. Text that comes from customers is cleaned and shortened in the order output, but it is still data written by someone else and must never be treated as an instruction (`docs/architecture.md`, decision 19).
 
 ### 1. Run the unit tests
 
@@ -108,8 +108,8 @@ The tests need no cluster. They use local HTTP servers and a stand-in for WooCom
 ### 2. Build the image and import it into the cluster
 
 ```bash
-docker build -t woo-mcp:0.1.0 services/woo-mcp
-k3d image import woo-mcp:0.1.0 -c urumi
+docker build -t woo-mcp:0.1.1 services/woo-mcp
+k3d image import woo-mcp:0.1.1 -c urumi
 ```
 
 The image is based on `node:24.21.0-alpine3.24`, contains only the compiled code and the production dependencies, and runs as user 10001. The chart uses `imagePullPolicy: IfNotPresent`, so the imported image is used and nothing is pulled.
