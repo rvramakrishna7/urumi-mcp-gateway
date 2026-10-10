@@ -5,7 +5,9 @@ import { CryptoError, loadKeyring } from './crypto/credentials.ts';
 import type { Keyring } from './crypto/credentials.ts';
 import { checkDatabase, createPool } from './db/pool.ts';
 import { createLogger } from './logger.ts';
+import { createGateway } from './core/gateway.ts';
 import { applySeed, loadSeedFile, SeedError } from './registry/seed.ts';
+import { createPoller } from './upstream/poller.ts';
 
 const logger = createLogger();
 
@@ -37,16 +39,26 @@ try {
   process.exit(1);
 }
 
-const { app, beginShutdown } = createApp({ logger, checkDatabase: () => checkDatabase(pool), admin: { db: pool, keyring, logger } });
+const gateway = createGateway({ db: pool, keyring, logger });
+const poller = createPoller({ db: pool, keyring, logger });
+
+const { app, beginShutdown } = createApp({
+  logger,
+  checkDatabase: () => checkDatabase(pool),
+  admin: { db: pool, keyring, logger },
+  debug: { db: pool, gateway, poller, logger },
+});
 const server = app.listen(config.port, () => {
   logger.info('listening', { port: config.port });
+  poller.start();
 });
 
 const shutdown = (signal: string) => {
   logger.info('shutting down', { signal });
   beginShutdown();
   server.close(() => {
-    pool.end().finally(() => process.exit(0));
+    // The poller stops first, so that no probe writes to a closed pool.
+    poller.stop().finally(() => pool.end().finally(() => process.exit(0)));
   });
   server.closeIdleConnections();
   setTimeout(() => process.exit(1), 10_000).unref();
