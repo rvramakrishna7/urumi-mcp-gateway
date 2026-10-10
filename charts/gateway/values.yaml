@@ -1,0 +1,51 @@
+# Default values for the gateway chart.
+# Environment-specific settings belong in values-local.yaml and values-prod.yaml.
+# This file must never contain real credentials.
+
+gateway:
+  image:
+    repository: gateway
+    # Pinned to an exact version. Never use latest.
+    tag: "0.1.0"
+    pullPolicy: IfNotPresent
+  # Names of Secrets (of type kubernetes.io/dockerconfigjson) that hold registry credentials. Empty for the
+  # local cluster, where the image is imported with "k3d image import".
+  imagePullSecrets: []
+  port: 8080
+  # Connections that one gateway pod may open to PostgreSQL.
+  dbPoolMax: 10
+  resources:
+    requests:
+      cpu: 50m
+      memory: 96Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi
+  # The migration runner, in the initContainer of the gateway pod.
+  migrateResources:
+    requests:
+      cpu: 25m
+      memory: 64Mi
+    limits:
+      cpu: 250m
+      memory: 128Mi
+
+postgres:
+  image:
+    repository: postgres
+    # Pinned to an exact version of PostgreSQL and of Alpine. Never use latest.
+    tag: "17.9-alpine3.23"
+    pullPolicy: IfNotPresent
+  database: gateway
+  user: gateway
+  persistence:
+    size: 1Gi
+    # Empty means the cluster default StorageClass.
+    storageClass: ""
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: "1"
+      memory: 512Mi

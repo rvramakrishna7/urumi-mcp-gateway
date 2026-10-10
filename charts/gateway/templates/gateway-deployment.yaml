@@ -1,0 +1,97 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gateway
+  labels:
+    {{- include "gateway.labels" . | nindent 4 }}
+    app.kubernetes.io/component: gateway
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "gateway.selectorLabels" (dict "root" . "component" "gateway") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "gateway.labels" . | nindent 8 }}
+        app.kubernetes.io/component: gateway
+    spec:
+      # The gateway never talks to the Kubernetes API, so it gets no ServiceAccount token.
+      automountServiceAccountToken: false
+      {{- include "gateway.imagePullSecrets" . | nindent 6 }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        # Lets the group of the process read the mounted Secret file (mode 0440).
+        fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      # The migrations run before the server starts, from the same image, so the schema that the code expects is
+      # there. A runner takes a database lock, so several pods starting together are safe. If the database is not
+      # up yet, the runner retries for about two minutes and then fails, and Kubernetes restarts the pod.
+      initContainers:
+        - name: migrate
+          image: "{{ .Values.gateway.image.repository }}:{{ .Values.gateway.image.tag }}"
+          imagePullPolicy: {{ .Values.gateway.image.pullPolicy }}
+          command: ["node", "dist/migrate.js"]
+          env:
+            {{- include "gateway.dbEnv" . | nindent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          volumeMounts:
+            - name: db-password
+              mountPath: /secrets/db
+              readOnly: true
+          resources:
+            {{- toYaml .Values.gateway.migrateResources | nindent 12 }}
+      containers:
+        - name: gateway
+          image: "{{ .Values.gateway.image.repository }}:{{ .Values.gateway.image.tag }}"
+          imagePullPolicy: {{ .Values.gateway.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.gateway.port }}
+          # Only paths and settings here. The database password is read from the mounted file.
+          env:
+            - name: PORT
+              value: {{ .Values.gateway.port | quote }}
+            - name: DB_POOL_MAX
+              value: {{ .Values.gateway.dbPoolMax | quote }}
+            {{- include "gateway.dbEnv" . | nindent 12 }}
+          # Liveness never calls the database or an upstream. Readiness calls the database (the gateway cannot
+          # serve without it) and never an upstream: a slow or dead upstream must not take the gateway out of the
+          # Service. The health routes need no token and ignore the Host header.
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 20
+            timeoutSeconds: 2
+            failureThreshold: 3
+          resources:
+            {{- toYaml .Values.gateway.resources | nindent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          volumeMounts:
+            - name: db-password
+              mountPath: /secrets/db
+              readOnly: true
+      volumes:
+        {{- include "gateway.dbSecretVolume" . | nindent 8 }}

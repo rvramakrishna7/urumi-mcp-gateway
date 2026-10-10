@@ -1,0 +1,7 @@
+# Overrides for the local k3d cluster (cluster/k3d-config.yaml).
+# The image must be imported first: k3d image import gateway:0.1.0 -c urumi
+# Use with: helm upgrade --install gateway charts/gateway -n gateway --create-namespace -f charts/gateway/values-local.yaml
+
+postgres:
+  persistence:
+    size: 2Gi

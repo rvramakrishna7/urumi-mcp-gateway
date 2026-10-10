@@ -1,0 +1,15 @@
+The gateway backend is installed in namespace "{{ .Release.Namespace }}". It is reachable only inside the cluster, at:
+
+  http://gateway.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.gateway.port }}
+
+There is no public endpoint yet: the MCP endpoint, the dashboard and the Ingress come in later steps.
+
+PostgreSQL runs as the StatefulSet "postgres" with a persistent volume. Its password was generated on first install and
+is kept in the Secret "{{ include "gateway.dbSecretName" . }}". It is never printed by this chart. The schema is created and upgraded by
+the migration runner in the initContainer "migrate" of the gateway pod. Follow it with:
+
+  kubectl logs -n {{ .Release.Namespace }} deploy/gateway -c migrate
+
+Check the installation with:
+
+  helm test {{ .Release.Name }} -n {{ .Release.Namespace }}
