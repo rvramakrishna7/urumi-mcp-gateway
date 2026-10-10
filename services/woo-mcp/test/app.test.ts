@@ -11,6 +11,17 @@ const TOKEN = randomBytes(24).toString('hex');
 const WRONG_TOKEN = randomBytes(24).toString('hex');
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
+// The app tests never reach WooCommerce: tool behaviour is tested in tools.test.ts.
+const toolDeps = {
+  woo: {
+    request: async (): Promise<never> => {
+      throw new Error('the app test must not call WooCommerce');
+    },
+  },
+  storeTimezone: 'Asia/Kolkata',
+  now: () => new Date(),
+};
+
 const logLines: string[] = [];
 const config = { allowedHosts: ['localhost', '127.0.0.1', 'woo-mcp.mcp-servers.svc.cluster.local'], mcpAuthToken: TOKEN };
 
@@ -73,7 +84,7 @@ const initialize = {
 
 describe('woo-mcp app', () => {
   before(async () => {
-    const { app } = createApp(config, createLogger((line) => logLines.push(line)));
+    const { app } = createApp(config, createLogger((line) => logLines.push(line)), toolDeps);
     server = await listen(app);
     port = (server.address() as AddressInfo).port;
     base = `http://127.0.0.1:${port}`;
@@ -98,7 +109,7 @@ describe('woo-mcp app', () => {
     });
 
     test('/readyz answers 503 after beginShutdown, /healthz still answers 200', async () => {
-      const second = createApp(config, createLogger(() => {}));
+      const second = createApp(config, createLogger(() => {}), toolDeps);
       const instance = await listen(second.app);
       const secondBase = `http://127.0.0.1:${(instance.address() as AddressInfo).port}`;
       try {
@@ -162,9 +173,12 @@ describe('woo-mcp app', () => {
       assert.deepEqual(message.result.capabilities.tools, { listChanged: false });
     });
 
-    test('tools/list works without a session and returns an empty list', async () => {
+    test('tools/list works without a session and returns the registered tools', async () => {
       const message = await rpc(await mcpPost({ jsonrpc: '2.0', id: 2, method: 'tools/list' }));
-      assert.deepEqual(message.result.tools, []);
+      assert.deepEqual(
+        message.result.tools.map((tool: { name: string }) => tool.name),
+        ['list_products', 'create_product', 'list_orders', 'get_order', 'update_order_status'],
+      );
     });
 
     test('an unknown tool is reported as an error', async () => {

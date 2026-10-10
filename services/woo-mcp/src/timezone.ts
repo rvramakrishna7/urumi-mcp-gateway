@@ -46,10 +46,16 @@ export function dayBounds(day: string, timeZone: string): DayBounds {
 // query never drops an order at the edge of the day because of rounding or inclusive and exclusive
 // comparison. The exact answer comes from isInDay.
 export function queryWindow(bounds: DayBounds): { after: string; before: string } {
-  return {
-    after: formatWooGmt(new Date(bounds.start.getTime() - 1000)),
-    before: formatWooGmt(new Date(bounds.end.getTime() + 1000)),
-  };
+  return { after: widenedAfter(bounds.start), before: widenedBefore(bounds.end) };
+}
+
+// One side of the window, for a query that has only a start or only an end.
+export function widenedAfter(start: Date): string {
+  return formatWooGmt(new Date(start.getTime() - 1000));
+}
+
+export function widenedBefore(end: Date): string {
+  return formatWooGmt(new Date(end.getTime() + 1000));
 }
 
 // WooCommerce returns date_created_gmt as 2026-10-09T12:34:56 with no zone suffix. The value is UTC.

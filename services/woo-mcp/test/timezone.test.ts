@@ -1,6 +1,6 @@
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
-import { dayBounds, isInDay, isValidTimeZone, localDay, parseWooGmt, queryWindow } from '../src/timezone.ts';
+import { dayBounds, isInDay, isValidTimeZone, localDay, parseWooGmt, queryWindow, widenedAfter, widenedBefore } from '../src/timezone.ts';
 
 // The expected bounds were computed outside the code under test: a Python script that applies the offsets
 // by hand from the daylight saving rules (US: second Sunday of March and first Sunday of November,
@@ -59,6 +59,13 @@ describe('queryWindow', () => {
   test('widens the day by one second on each side, in the WooCommerce format', () => {
     const window = queryWindow(dayBounds('2026-10-09', 'Asia/Kolkata'));
     assert.deepEqual(window, { after: '2026-10-08T18:29:59', before: '2026-10-09T18:30:01' });
+  });
+});
+
+describe('widenedAfter and widenedBefore', () => {
+  test('widen one side by one second', () => {
+    assert.equal(widenedAfter(new Date('2026-10-08T18:30:00Z')), '2026-10-08T18:29:59');
+    assert.equal(widenedBefore(new Date('2026-10-09T18:30:00Z')), '2026-10-09T18:30:01');
   });
 });
 

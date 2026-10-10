@@ -7,6 +7,7 @@ import { bearerAuth } from './auth.ts';
 import type { Config } from './config.ts';
 import type { Logger } from './logger.ts';
 import { createMcpServer } from './server.ts';
+import type { ToolDeps } from './tools/common.ts';
 
 export interface WooMcpApp {
   app: express.Express;
@@ -14,7 +15,7 @@ export interface WooMcpApp {
   beginShutdown: () => void;
 }
 
-export function createApp(config: Pick<Config, 'allowedHosts' | 'mcpAuthToken'>, logger: Logger): WooMcpApp {
+export function createApp(config: Pick<Config, 'allowedHosts' | 'mcpAuthToken'>, logger: Logger, tools: ToolDeps): WooMcpApp {
   const app = express();
   app.disable('x-powered-by');
   let shuttingDown = false;
@@ -51,7 +52,7 @@ export function createApp(config: Pick<Config, 'allowedHosts' | 'mcpAuthToken'>,
   mcp.use(hostHeaderValidation(config.allowedHosts), bearerAuth(config.mcpAuthToken), express.json({ limit: '100kb' }));
 
   mcp.post('/', async (req, res) => {
-    const server = createMcpServer();
+    const server = createMcpServer(tools, logger);
     const transport = new NodeStreamableHTTPServerTransport({ sessionIdGenerator: undefined });
     res.on('close', () => {
       void transport.close();

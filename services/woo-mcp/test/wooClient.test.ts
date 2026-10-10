@@ -149,7 +149,35 @@ describe('WooClient', () => {
     const { baseUrl } = await track((_req, res) => {
       res.writeHead(204).end();
     });
-    assert.deepEqual(await clientFor(baseUrl).request('GET', { path: '/a' }), { status: 204, data: null });
+    assert.deepEqual(await clientFor(baseUrl).request('GET', { path: '/a' }), { status: 204, data: null, total: null, totalPages: null });
+  });
+
+  test('reads the total and the page count from the WooCommerce headers', async () => {
+    const { baseUrl } = await track((_req, res) => {
+      res.writeHead(200, { 'Content-Type': 'application/json', 'X-WP-Total': '41', 'X-WP-TotalPages': '3' }).end('[]');
+    });
+    const result = await clientFor(baseUrl).request('GET', { path: '/a' });
+    assert.equal(result.total, 41);
+    assert.equal(result.totalPages, 3);
+  });
+
+  test('ignores a total header that is not a number', async () => {
+    const { baseUrl } = await track((_req, res) => {
+      res.writeHead(200, { 'Content-Type': 'application/json', 'X-WP-Total': 'many' }).end('[]');
+    });
+    const result = await clientFor(baseUrl).request('GET', { path: '/a' });
+    assert.equal(result.total, null);
+  });
+
+  test('replaces a URL inside a WooCommerce message', async () => {
+    const { baseUrl } = await track((_req, res) =>
+      json(res, 400, { code: 'x', message: 'See http://store.urumi.test/wp-json/wc/v3/orders?consumer_key=zzz for details' }),
+    );
+    await assert.rejects(clientFor(baseUrl).request('GET', { path: '/a' }), (error: unknown) => {
+      assert.ok(error instanceof WooApiError);
+      assert.equal(error.message, 'WooCommerce answered with status 400 (x: See [url] for details)');
+      return true;
+    });
   });
 
   test('reports a WooCommerce error with its status and code', async () => {

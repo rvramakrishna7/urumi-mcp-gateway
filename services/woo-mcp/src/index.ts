@@ -2,6 +2,7 @@ import { createApp } from './app.ts';
 import { ConfigError, loadConfig } from './config.ts';
 import type { Config } from './config.ts';
 import { createLogger } from './logger.ts';
+import { WooClient } from './wooClient.ts';
 
 const logger = createLogger();
 
@@ -14,7 +15,14 @@ try {
   process.exit(1);
 }
 
-const { app, beginShutdown } = createApp(config, logger);
+const woo = new WooClient({
+  baseUrl: config.wooBaseUrl,
+  publicUrl: config.wooPublicUrl,
+  consumerKey: config.wooConsumerKey,
+  consumerSecret: config.wooConsumerSecret,
+  timeoutMs: config.wooRequestTimeoutMs,
+});
+const { app, beginShutdown } = createApp(config, logger, { woo, storeTimezone: config.storeTimezone, now: () => new Date() });
 const server = app.listen(config.port, () => {
   logger.info('listening', { port: config.port });
 });

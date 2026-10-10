@@ -25,6 +25,9 @@ export interface WooRequest {
 export interface WooResponse<T = unknown> {
   status: number;
   data: T;
+  // From the X-WP-Total and X-WP-TotalPages headers of a list answer, or null when the header is absent.
+  total: number | null;
+  totalPages: number | null;
 }
 
 export type WooErrorKind = 'timeout' | 'network' | 'redirect' | 'http' | 'invalid-response';
@@ -75,6 +78,7 @@ export class WooClient {
 
     let status: number;
     let text: string | null;
+    let totals = { total: null as number | null, totalPages: null as number | null };
     try {
       const response = await this.fetchImpl(url, {
         method,
@@ -85,6 +89,7 @@ export class WooClient {
         signal: AbortSignal.timeout(timeoutMs),
       });
       status = response.status;
+      totals = { total: headerNumber(response, 'x-wp-total'), totalPages: headerNumber(response, 'x-wp-totalpages') };
       if (status >= 300 && status < 400) {
         await response.body?.cancel();
         throw new WooApiError('redirect', `WooCommerce answered with a redirect (status ${status}), which is not followed`, { status });
@@ -103,10 +108,10 @@ export class WooClient {
     }
 
     if (text.trim() === '') {
-      return { status, data: null as T };
+      return { status, data: null as T, ...totals };
     }
     try {
-      return { status, data: JSON.parse(text) as T };
+      return { status, data: JSON.parse(text) as T, ...totals };
     } catch {
       throw new WooApiError('invalid-response', `WooCommerce answered with status ${status} and a body that is not JSON`, { status });
     }
@@ -142,14 +147,14 @@ export class WooClient {
   }
 
   // Text from WooCommerce is shown to a caller, so the key and the secret are removed if it echoes them,
-  // control characters are dropped and the length is limited.
+  // URLs are replaced, control characters are dropped and the length is limited.
   private safeText(value: string): string {
     const { consumerKey, consumerSecret } = this.options;
     let text = value;
     for (const secret of [consumerSecret, consumerKey]) {
       if (secret !== '') text = text.split(secret).join('[redacted]');
     }
-    text = text.replace(/[\u0000-\u001f\u007f]/g, ' ').trim();
+    text = text.replace(/https?:\/\/\S+/gi, '[url]').replace(/[\u0000-\u001f\u007f]/g, ' ').trim();
     return text.length > MAX_WOO_MESSAGE_LENGTH ? `${text.slice(0, MAX_WOO_MESSAGE_LENGTH)}...` : text;
   }
 }
@@ -177,4 +182,9 @@ async function readLimited(response: Response, maxBytes: number): Promise<string
     chunks.push(value);
   }
   return Buffer.concat(chunks).toString('utf8');
+}
+
+function headerNumber(response: Response, name: string): number | null {
+  const value = response.headers.get(name);
+  return value !== null && /^\d{1,12}$/.test(value) ? Number(value) : null;
 }
