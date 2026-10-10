@@ -1,5 +1,5 @@
 # Overrides for the local k3d cluster (cluster/k3d-config.yaml).
-# The image must be imported first: k3d image import woo-mcp:0.1.0 -c urumi
+# The image must be imported first: k3d image import woo-mcp:0.1.1 -c urumi
 # Use with: helm upgrade --install mcp-servers charts/mcp-servers -n mcp-servers --create-namespace -f charts/mcp-servers/values-local.yaml
 # The store chart must be installed first (it creates the Secret that holds the WooCommerce key).
 

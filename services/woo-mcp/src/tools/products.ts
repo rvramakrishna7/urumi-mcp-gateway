@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { ToolInputError } from './common.ts';
+import { assertPlainText, expectArray, expectItem } from './common.ts';
 import type { ToolDefinition } from './common.ts';
 
 const PRODUCTS_PATH = '/wp-json/wc/v3/products';
@@ -56,7 +56,7 @@ export const listProducts: ToolDefinition<typeof listProductsSchema> = {
     if (args.status !== undefined) query.push(['status', args.status]);
     const response = await woo.request<WooProduct[]>('GET', { path: PRODUCTS_PATH, query });
     return {
-      products: response.data.map(toProduct),
+      products: expectArray<WooProduct>(response.data).map(toProduct),
       page: args.page,
       per_page: args.per_page,
       total: response.total,
@@ -80,12 +80,16 @@ export const createProduct: ToolDefinition<typeof createProductSchema> = {
   name: 'create_product',
   title: 'Create product',
   description:
-    'Creates one simple product in the WooCommerce store and returns it with its permalink. Each call creates a new ' +
+    'Creates one simple product in the WooCommerce store and returns it with its permalink. The name, description ' +
+    'and sku must be plain text: input that contains < or > is rejected. Each call creates a new ' +
     'product, so calling it twice with the same name creates two products. With status publish the product is ' +
     'visible in the store at once.',
   inputSchema: createProductSchema,
   annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
   handler: async (args, { woo }) => {
+    assertPlainText('name', args.name);
+    if (args.description !== undefined) assertPlainText('description', args.description);
+    if (args.sku !== undefined) assertPlainText('sku', args.sku);
     const body: Record<string, string> = {
       name: args.name,
       type: 'simple',
@@ -95,9 +99,6 @@ export const createProduct: ToolDefinition<typeof createProductSchema> = {
     if (args.description !== undefined) body.description = args.description;
     if (args.sku !== undefined) body.sku = args.sku;
     const response = await woo.request<WooProduct>('POST', { path: PRODUCTS_PATH, body });
-    if (typeof response.data?.id !== 'number') {
-      throw new ToolInputError('WooCommerce did not return the created product. Check the product list before trying again.');
-    }
-    return { product: toProduct(response.data) };
+    return { product: toProduct(expectItem<WooProduct>(response.data)) };
   },
 };

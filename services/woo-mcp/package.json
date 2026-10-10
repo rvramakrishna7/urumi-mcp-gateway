@@ -1,6 +1,6 @@
 {
   "name": "woo-mcp",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "MCP server that exposes the WooCommerce store as tools over Streamable HTTP",
   "private": true,
   "type": "module",

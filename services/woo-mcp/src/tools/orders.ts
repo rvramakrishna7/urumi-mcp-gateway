@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { dayBounds, isInDay, localDay, widenedAfter, widenedBefore } from '../timezone.ts';
 import type { DayBounds } from '../timezone.ts';
-import { ToolInputError } from './common.ts';
+import { expectArray, expectItem, safeText, ToolInputError } from './common.ts';
 import type { ToolDefinition } from './common.ts';
 
 const ORDERS_PATH = '/wp-json/wc/v3/orders';
@@ -50,7 +50,7 @@ function utc(value: string | null | undefined): string | null {
 }
 
 function billingName(order: WooOrder): string {
-  return `${order.billing?.first_name ?? ''} ${order.billing?.last_name ?? ''}`.trim();
+  return safeText(`${order.billing?.first_name ?? ''} ${order.billing?.last_name ?? ''}`);
 }
 
 function toOrderSummary(order: WooOrder) {
@@ -62,7 +62,7 @@ function toOrderSummary(order: WooOrder) {
     currency: order.currency,
     date: utc(order.date_created_gmt),
     line_items: (order.line_items ?? []).map((item) => ({
-      name: item.name,
+      name: safeText(item.name),
       product_id: item.product_id,
       quantity: item.quantity,
       total: item.total,
@@ -127,7 +127,7 @@ export const listOrders: ToolDefinition<typeof listOrdersSchema> = {
       if (args.status !== undefined) query.push(['status', args.status]);
       const response = await woo.request<WooOrder[]>('GET', { path: ORDERS_PATH, query });
       return {
-        orders: response.data.map(toOrderSummary),
+        orders: expectArray<WooOrder>(response.data).map(toOrderSummary),
         page: args.page,
         per_page: args.per_page,
         total: response.total,
@@ -155,7 +155,7 @@ export const listOrders: ToolDefinition<typeof listOrdersSchema> = {
           `More than ${MAX_WINDOW_PAGES * WINDOW_PAGE_SIZE} orders are in this date range. Use a shorter range or add a status.`,
         );
       }
-      inWindow.push(...response.data.filter((order) => isInDay(order.date_created_gmt, bounds)));
+      inWindow.push(...expectArray<WooOrder>(response.data).filter((order) => isInDay(order.date_created_gmt, bounds)));
     }
 
     const offset = (args.page - 1) * args.per_page;
@@ -186,7 +186,7 @@ export const getOrder: ToolDefinition<typeof getOrderSchema> = {
   annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   handler: async (args, { woo }) => {
     const response = await woo.request<WooOrder>('GET', { path: `${ORDERS_PATH}/${args.id}` });
-    const order = response.data;
+    const order = expectItem<WooOrder>(response.data, ['status']);
     return {
       order: {
         id: order.id,
@@ -205,15 +205,15 @@ export const getOrder: ToolDefinition<typeof getOrderSchema> = {
         created_via: order.created_via ?? null,
         billing_name: billingName(order),
         line_items: (order.line_items ?? []).map((item) => ({
-          name: item.name,
+          name: safeText(item.name),
           sku: item.sku ?? '',
           product_id: item.product_id,
           quantity: item.quantity,
           subtotal: item.subtotal ?? null,
           total: item.total,
         })),
-        shipping_lines: (order.shipping_lines ?? []).map((line) => ({ method: line.method_title, total: line.total })),
-        coupon_lines: (order.coupon_lines ?? []).map((line) => ({ code: line.code, discount: line.discount })),
+        shipping_lines: (order.shipping_lines ?? []).map((line) => ({ method: safeText(line.method_title), total: line.total })),
+        coupon_lines: (order.coupon_lines ?? []).map((line) => ({ code: safeText(line.code), discount: line.discount })),
         refunds: (order.refunds ?? []).map((refund) => ({ id: refund.id, total: refund.total })),
       },
     };
@@ -242,11 +242,11 @@ export const updateOrderStatus: ToolDefinition<typeof updateOrderStatusSchema> =
   handler: async (args, { woo }) => {
     const path = `${ORDERS_PATH}/${args.id}`;
     const current = await woo.request<WooOrder>('GET', { path });
-    const previous = current.data.status;
+    const previous = expectItem<WooOrder>(current.data, ['status']).status;
     if (previous === args.status) {
       return { id: args.id, previous_status: previous, new_status: previous, changed: false };
     }
     const updated = await woo.request<WooOrder>('PUT', { path, body: { status: args.status } });
-    return { id: args.id, previous_status: previous, new_status: updated.data.status, changed: true };
+    return { id: args.id, previous_status: previous, new_status: expectItem<WooOrder>(updated.data, ['status']).status, changed: true };
   },
 };

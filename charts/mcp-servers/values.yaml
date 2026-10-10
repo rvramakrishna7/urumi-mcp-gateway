@@ -9,7 +9,7 @@ wooMcp:
   image:
     repository: woo-mcp
     # Pinned to an exact version. Never use latest.
-    tag: "0.1.0"
+    tag: "0.1.1"
     pullPolicy: IfNotPresent
   # Names of Secrets (of type kubernetes.io/dockerconfigjson) that hold registry credentials. Empty for the
   # local cluster, where the image is imported with "k3d image import".
