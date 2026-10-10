@@ -1,0 +1,10 @@
+# Only src, package.json, package-lock.json and the two tsconfig files are needed by the Dockerfile.
+node_modules
+dist
+test
+Dockerfile
+.dockerignore
+.env
+.env.*
+*.md
+*.log
