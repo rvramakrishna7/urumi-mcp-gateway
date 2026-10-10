@@ -2,7 +2,7 @@
 
 This document records the approved architecture decisions for the team MCP gateway. It is the source of truth for design. If a decision is not written here, it has not been made.
 
-Status: decisions 1 to 15 approved. Two decisions are still open and are listed at the end.
+Status: decisions 1 to 23 approved. Decisions 16 to 23 (the woo-mcp server, Step 7) were checked on the local cluster. Two decisions are still open and are listed at the end.
 
 ## Overview
 
@@ -236,6 +236,87 @@ The delete is allowed because of the `keep` policy: the next upgrade generates a
 - Not tested: whether a JSON request body is covered by an OAuth 1.0a signature. The OAuth 1.0a rules only cover form-encoded bodies, so a JSON body is probably not signed.
 - Alternatives rejected: Basic authentication with a forged `X-Forwarded-Proto` header; TLS inside the cluster (too large for this step, and TLS is undecided); WordPress Application Passwords (disabled over plain HTTP, and not limited by permission); direct database access from the MCP server (decision 6); writing the Secret from the Job (it would need Kubernetes API access and RBAC).
 
+## woo-mcp server (Step 7)
+
+Decisions 16 to 23 describe the MCP server in `services/woo-mcp`, its image and its chart `charts/mcp-servers` (release `mcp-servers`, namespace `mcp-servers`). Each was checked on the local k3d cluster, and the evidence is noted where it matters.
+
+### 16. MCP SDK v2 with stateless Streamable HTTP
+
+woo-mcp uses the v2 line of the TypeScript SDK (`@modelcontextprotocol/server` 2.3.1, with `@modelcontextprotocol/node` 2.1.1 and `@modelcontextprotocol/express` 2.0.2), TypeScript 7.0.2, Express 5.3.0 and zod 4.6.5. It speaks Streamable HTTP on `POST /mcp` and keeps no session: every request builds a new `McpServer` and a new transport (`sessionIdGenerator: undefined`), and `GET /mcp` answers 405. The tools capability is declared with `listChanged: false`.
+
+- Why: the tool list is static and no tool keeps state between calls, so there is nothing for a session to hold. Any replica can answer any request, and the gateway does not have to keep a session per upstream. `tools/list` works without `initialize` (covered by a test).
+- Order on `/mcp`: the Host header check, then the bearer token, and only then the body is read (limit 100 kB). `/healthz` and `/readyz` come before all of them, because the kubelet probes the pod IP and sends no credential.
+- Tradeoff: the server cannot push notifications or open an event stream, and nothing can be resumed. Neither is needed for five request and response tools.
+- Alternatives rejected: the v1 single package `@modelcontextprotocol/sdk` (v2 is the stable line); stateful sessions (state and sticky routing with no benefit).
+
+### 17. The WooCommerce client signs for the public URL and calls the in-cluster URL
+
+`src/wooClient.ts` implements the requirement of decision 15. `WOO_PUBLIC_URL` is the home URL that the signature is computed for. `WOO_BASE_URL` is the address that is called, `http://wordpress.store.svc.cluster.local`. All `oauth_*` parameters (HMAC-SHA256, a fresh random nonce per request) go only in the `Authorization` header, and the URL carries only the real query parameters. The key and the secret are read from files.
+
+- Every call has a timeout (`WOO_REQUEST_TIMEOUT_MS`, default 10000, allowed 100 to 120000) that also covers reading the body. Redirects are not followed, because a redirect would send the signed request to another address. There is no retry on any method: a retried POST could create a second product, and the failure is returned to the caller instead. The body of an answer is capped at 2 MB.
+- Errors reach the caller as a `WooApiError` with a kind (`timeout`, `network`, `redirect`, `http` or `invalid-response`). The text carries the status and the WooCommerce error code and message, with the key and the secret removed, URLs replaced and the length limited to 200 characters. It never carries the URL, a header or a raw body. A network error carries only the system code, for example `ECONNREFUSED`.
+- Verified: the six expected signatures in the tests were computed by an independent Python implementation (`hmac`, `hashlib`, `urllib.parse`) and match. A signed GET through a port-forward returned 200; a wrong secret returned 401 `Invalid signature`. POST (201) and PUT (200) worked with the header-only signature. In the WordPress log the new request lines carried no `oauth_` parameter and no key or secret.
+- Tradeoff: only the method, the URL and the query are signed. A JSON body is not covered by the signature (see the known limitations).
+
+### 18. The bearer token is the upstream credential of woo-mcp
+
+Callers of woo-mcp must send `Authorization: Bearer <token>`. The token is generated in the cluster (48 random characters) into the Secret `woo-mcp-auth` in `mcp-servers`, reused on upgrade through `lookup`, marked to be kept on `helm uninstall` (like the Secrets of the store chart), and mounted into the pod as a file. This is the upstream credential that the gateway will hold for this server (see the credential domains). It is separate from the user API keys of decision 4, which are never forwarded to an upstream.
+
+- Why: a ClusterIP Service stops traffic from outside the cluster, but until the NetworkPolicy of decision 7 exists, any pod in the cluster could call woo-mcp. The token makes the call fail without the credential.
+- Verified in the cluster: `POST /mcp` without a token and with a wrong token returned 401; with the token, `tools/list` returned 5 tools.
+
+### 19. Tool design
+
+There are five tools. Their names carry no prefix, because the gateway adds the server slug (decision 5): `list_products`, `create_product`, `list_orders`, `get_order` and `update_order_status`.
+
+- **Strict schemas.** Each input is a strict zod object, so the advertised JSON Schema has `additionalProperties: false` and an unknown key is rejected. Limits are in the schema: `per_page` 1 to 50 (default 20), a product name of 1 to 200 characters, a description of at most 5000, and a price that is a decimal string with at most two decimals. A call that fails validation comes back as a result with `isError: true` and a message that names the field (observed over HTTP), not as a protocol error.
+- **Failures are results, not protocol errors.** An expected failure (WooCommerce 4xx, a timeout, the store being down) returns a result with `isError: true` and a plain sentence, so that the model can read the reason. Examples: "The WooCommerce store cannot be reached right now. Try again later.", "The WooCommerce store did not answer in time...", and for 401 or 403 "WooCommerce refused the request...". An unexpected exception becomes a generic error result and is logged by name only.
+- **What a tool can return is an allowlist.** Each tool builds its answer from an explicit list of fields, so a field that WooCommerce adds later is not passed on by accident. `list_orders` and `get_order` return no email, phone, address, customer note or IP address, only the billing name. Products are returned with id, name, sku, price, status, stock and permalink.
+- **`update_order_status` does not accept `refunded`.** The accepted statuses are `pending`, `processing`, `on-hold`, `completed`, `cancelled` and `failed`. The tool reads the order first, returns the previous and the new status, and does not send a change when the order already has the status (`changed: false`). WooCommerce runs its normal actions for a status change; on the test order, moving it to `completed` set `date_completed`, and moving it back to `processing` left that date in place.
+- **`create_product` creates a simple product**, `publish` by default, and every call creates a new product.
+- The tools carry annotations: the three read tools are read-only; the two write tools are not, and neither is destructive.
+- Tool descriptions are plain and factual, because the model reads them. A test checks their length and that they contain no instruction-like wording.
+- Logs: one line per call with the tool name, the duration, the outcome (`ok` or `error`) and, for an error, its kind. Arguments and results are never logged.
+
+### 20. "Today" is a store-timezone day, queried as a widened UTC window
+
+`list_orders` takes `date_from` and `date_to` as `today`, `yesterday` or `YYYY-MM-DD`. Both are whole days in `STORE_TIMEZONE` (an IANA name, required, the same as the store's timezone) and both are included. The day bounds are computed from the timezone rules in `Intl`, so a day with a daylight saving change is 23 or 25 hours long. The tests check Kolkata, UTC, New York on both change days and Auckland, against bounds computed by hand in a separate script.
+
+- WooCommerce is asked for the window widened by one second on each side, in UTC, with `dates_are_gmt=true`. The result is then filtered exactly on `date_created_gmt` (start included, end excluded). The totals are counted after that filter and not taken from `X-WP-Total`. The answer also states the resolved UTC window and the store timezone.
+- Why: the edge of a day should not depend on how WooCommerce compares or rounds a timestamp, and a model that asks for "today" must get the store's today, not the UTC day.
+- Tradeoff: with dates, paging is done in the server. It reads WooCommerce in pages of 100 and stops with a clear error when the range holds more than 500 orders. Without dates, WooCommerce does the paging and its totals are used.
+- Verified live: `date_from: yesterday` and an explicit date both returned order 13, and `today` returned none.
+
+### 21. The image and its security context
+
+`services/woo-mcp/Dockerfile` has three stages on the pinned base `node:24.21.0-alpine3.24`: one installs every dependency and compiles, one installs production dependencies only (`npm ci --omit=dev`), and the final stage copies only `dist`, `node_modules` and `package.json`. It runs as the numeric user 10001. The image is `woo-mcp:0.1.0` and is never tagged `latest`. Locally it is imported with `k3d image import`; for production the registry and the pull secret are only documented in `values-prod.yaml`.
+
+- Measured: the image is 271 MB unpacked (65.4 MB in the cluster node), and the final `node_modules` has 71 packages with no `typescript`, no `@types`, no `src` and no `test`.
+- Run with `--read-only --cap-drop ALL --security-opt no-new-privileges`: the process had uid and gid 10001, `CapEff` of zero, and a write to `/app` or `/tmp` failed with "Read-only file system".
+- The pod sets `runAsNonRoot`, user and group 10001, `seccompProfile: RuntimeDefault`, `allowPrivilegeEscalation: false`, `readOnlyRootFilesystem: true`, `capabilities.drop: [ALL]` and `automountServiceAccountToken: false`. In the pod: uid 10001, `CapEff` zero, a write to `/app` failed, and `/var/run/secrets/kubernetes.io` did not exist.
+- Secrets are mounted as files (mode 0440, `fsGroup` 10001), never as environment variables. The pod has resource requests and limits and both probes.
+- Alternatives rejected: a single-stage image (it would carry the compiler and the dev dependencies); a named user (a numeric one lets Kubernetes check `runAsNonRoot` without a lookup).
+
+### 22. The chart copies the key from the store Secret and generates its own token
+
+`charts/mcp-servers` reads `consumer-key` and `consumer-secret` from the Secret `woo-mcp-api` in the namespace `store` with `lookup` and copies only those two into its own Secret `woo-mcp-store-api`. The store Secret stays the source of truth, and a rotation reaches woo-mcp on the next `helm upgrade`. The bearer token is in a second Secret, `woo-mcp-auth` (decision 18). The pod template carries a hash of the copied values as an annotation, so a rotation restarts the pod: woo-mcp reads the key files once, at start. The token is not part of the hash, because it is random on first install and the hash must stay the same on every later upgrade.
+
+- If the store Secret is missing or lacks a key, the install stops with a message that says to install the store chart first. `wooMcp.store.requireExisting=false` exists only to render the chart without a cluster (`helm template`, `helm lint`) and renders a placeholder that does not work.
+- The Service is ClusterIP and the chart has no Ingress. The Host names that woo-mcp accepts are built from the release namespace (`woo-mcp`, `woo-mcp.<namespace>`, `.svc` and `.svc.cluster.local`) plus `localhost` and `127.0.0.1` for port-forwards. `WOO_PUBLIC_URL` and `STORE_TIMEZONE` come from the values files.
+- Verified: after the install, the digests of the copied key and secret matched the store Secret, and the copy held exactly two keys. A second `helm upgrade` left the token digest, the digest and resourceVersion of the copied Secret, the deployment generation and the pod (restarts 0) identical. `helm test` passed with nine checks that print only names, counts and PASS or FAIL.
+- Tradeoff: like decision 10, the rendered Secrets are stored base64 encoded in the Helm release metadata.
+- `values-prod.yaml` is linted only. It sets a registry image and an `imagePullSecret`, which must be created by hand before the install.
+
+### 23. Probes do not depend on the store, and the server shuts down cleanly
+
+The readiness probe is `GET /readyz` and the liveness probe is `GET /healthz`. Neither calls WordPress. `/readyz` answers 503 only while the process shuts down.
+
+- Why: when the store is down, woo-mcp can still answer, with an error result that tells the model what happened. A readiness probe that checked the store would remove the pod from the Service, and the gateway would get "no endpoint" instead of that message. A liveness probe that checked it would restart a healthy process (the same reasoning as decision 14).
+- Measured with `deployment/wordpress` scaled to 0: `list_products`, `list_orders` and `update_order_status` each returned `isError: true` with "The WooCommerce store cannot be reached right now. Try again later." (the first call took 0.5 s). After 40 more seconds the woo-mcp pod was still Ready with 0 restarts, `/readyz` answered ready, `tools/list` still returned 5 tools, and no probe event was recorded during the outage. After scaling WordPress back to 1, the first `list_products` call succeeded.
+- Shutdown: with `kubectl rollout restart`, the old pod logged `shutting down` with the signal `SIGTERM` and its container ended with exit code 0 (Completed), after the new pod was Ready. The new pod showed 0 restarts.
+- Tradeoff: readiness says nothing about the store. A store outage is visible as tool errors, so monitoring the store belongs elsewhere. One readiness probe failed with "connection refused" 2 seconds after the first start of the pod, before the server was listening; it is harmless and no `startupProbe` was added.
+- Alternatives rejected: readiness that calls WordPress, and liveness that calls WordPress (the reasoning of decision 14 applies).
+
 ## Known limitations
 
 - The startup probe still uses `/wp-login.php`. If MariaDB is down for more than five minutes (60 checks, 5 seconds apart) while the WordPress container is starting, the kubelet kills and restarts it. This follows from the probe configuration and was not tested.
@@ -246,6 +327,15 @@ The delete is allowed because of the `keep` policy: the next upgrade generates a
 - Deviation from the brief: the brief asks for readiness and liveness checks on every workload. Every long-running workload (WordPress and MariaDB) has both, but the bootstrap Job and the `helm test` Pod are run-to-completion and have no probes. The Job is bounded by `activeDeadlineSeconds`, `backoffLimit` and resource limits, and the test Pod by `activeDeadlineSeconds`, `restartPolicy: Never` and resource limits.
 - HPOS (custom order tables) is left at the WooCommerce default. The final value is `yes`. WooCommerce enables it for a new shop on the first full request after the install, not during the CLI activation, so the bootstrap read-back shows `no` and a later check shows `yes`. WP-CLI, WC-CLI and the REST API work with either storage, so the store checks do not depend on it.
 - The first install path of the API key provisioning (random generation on an empty cluster) was only rendered with `helm lint` and `helm template`, not run. It is covered by the fresh-install test in Step 19. The upgrade, repeat and rotation paths were run.
+- woo-mcp, no NetworkPolicy yet: the Service is ClusterIP and calls need the bearer token, but any pod in the cluster can still reach the port. The NetworkPolicy of decision 7 is left to the security step (Step 17).
+- woo-mcp has no `preStop` delay. On a restart the pod answers `/readyz` with 503 and stops accepting connections at once, so a request that was routed to it a moment before can be refused. Measured only for the clean exit (exit code 0), not for requests in flight.
+- The image tag `woo-mcp:0.1.0` and the base image tag are pinned to a version, not to a digest. A tag can be moved in a registry.
+- The bearer token of woo-mcp is not rotated by `helm upgrade`. To rotate it: delete the Secret `woo-mcp-auth`, run `helm upgrade`, then `kubectl rollout restart deployment/woo-mcp -n mcp-servers`, and update whatever holds the old token. This procedure was not run during testing. (A rotation of the WooCommerce key does restart the pod, see decision 22.)
+- `update_order_status` reads the order and then changes it, and the two calls are not atomic. If two callers change the same order at the same time, the reported previous status can be out of date.
+- A JSON request body is not covered by the OAuth 1.0a signature. The signature covers the method, the URL and the query. WooCommerce accepted the signed POST and PUT, but the body of a request is not protected against change in transit.
+- `list_orders` with a date range reads at most 500 orders (5 pages of 100) and returns an error for a larger range. Without dates there is no such limit.
+- `helm template` and `helm lint` of `charts/mcp-servers` need `--set wooMcp.store.requireExisting=false`, because `lookup` returns nothing without a cluster. The Secret rendered that way holds a placeholder and must not be installed.
+- Like decision 10, the Secrets of `mcp-servers` are stored base64 encoded in the Helm release metadata. `values-prod.yaml` of this chart is only linted, not deployed.
 
 ## Credential domains
 
@@ -256,7 +346,8 @@ Two separate kinds of credential exist and they never mix.
 | User API key | MCP client and gateway | SHA-256 hash in PostgreSQL | The user, once |
 | Dashboard session | Browser and gateway | httpOnly cookie | Nobody; not readable by scripts |
 | Upstream credential | Gateway and one upstream MCP server | Gateway side only | Admin when entering it; never returned afterwards |
-| WooCommerce consumer key and secret | woo-mcp and WordPress; only an OAuth 1.0a signature in the `Authorization` header travels (decision 15) | Kubernetes Secret `woo-mcp-api` in `store` (source of truth); the WordPress database holds the key hash and the secret in plaintext | woo-mcp, and the store bootstrap Job and test Pod through mounted files; anyone who can read the Secret or the table `woocommerce_api_keys` |
+| WooCommerce consumer key and secret | woo-mcp and WordPress; only an OAuth 1.0a signature in the `Authorization` header travels (decisions 15 and 17) | Kubernetes Secret `woo-mcp-api` in `store` (source of truth); a copy of the two values in the Secret `woo-mcp-store-api` in `mcp-servers`, refreshed by `helm upgrade`; the WordPress database holds the key hash and the secret in plaintext | woo-mcp (mounted as files), the store bootstrap Job and test Pod; anyone who can read the Secrets or the table `woocommerce_api_keys` |
+| woo-mcp bearer token | The gateway and woo-mcp, in the header `Authorization: Bearer` (decision 18) | Kubernetes Secret `woo-mcp-auth` in `mcp-servers`, mounted as a file; the gateway will hold its own copy as the upstream credential | woo-mcp, and anyone who can read the Secret; never a browser or an MCP client |
 
 The gateway never forwards a user's API key to an upstream, and never returns an upstream credential to a browser or an MCP client.
 
