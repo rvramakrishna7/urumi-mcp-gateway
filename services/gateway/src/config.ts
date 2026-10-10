@@ -64,6 +64,26 @@ export function loadDbConfig(env: NodeJS.ProcessEnv = process.env): DbConfig {
   };
 }
 
+export interface SecurityConfig {
+  masterKeyFile: string;
+  masterKeyId: string;
+  // Optional: without it nothing is seeded.
+  seedFile: string | undefined;
+}
+
+const securitySchema = z.object({
+  MASTER_KEY_FILE: z.string().min(1),
+  MASTER_KEY_ID: z.string().regex(/^[A-Za-z0-9_-]{1,32}$/).default('k1'),
+  SEED_FILE: z.string().min(1).optional(),
+});
+
+// Paths and ids only. The key itself is read from the file by loadKeyring().
+export function loadSecurityConfig(env: NodeJS.ProcessEnv = process.env): SecurityConfig {
+  const parsed = securitySchema.safeParse(env);
+  if (!parsed.success) throw invalid(parsed.error);
+  return { masterKeyFile: parsed.data.MASTER_KEY_FILE, masterKeyId: parsed.data.MASTER_KEY_ID, seedFile: parsed.data.SEED_FILE };
+}
+
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   const parsed = serverSchema.safeParse(env);
   if (!parsed.success) throw invalid(parsed.error);

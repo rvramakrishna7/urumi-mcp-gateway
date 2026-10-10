@@ -6,7 +6,7 @@ gateway:
   image:
     repository: gateway
     # Pinned to an exact version. Never use latest.
-    tag: "0.1.0"
+    tag: "0.2.0"
     pullPolicy: IfNotPresent
   # Names of Secrets (of type kubernetes.io/dockerconfigjson) that hold registry credentials. Empty for the
   # local cluster, where the image is imported with "k3d image import".
@@ -14,6 +14,8 @@ gateway:
   port: 8080
   # Connections that one gateway pod may open to PostgreSQL.
   dbPoolMax: 10
+  # The id of the master key that encrypts new credentials (decision 30). Rotation adds a new id.
+  masterKeyId: k1
   resources:
     requests:
       cpu: 50m
@@ -29,6 +31,25 @@ gateway:
     limits:
       cpu: 250m
       memory: 128Mi
+
+# Servers that the install registers once (decision 31). The values hold no secret: a credential names the Secret that
+# holds the value, and the chart copies it with lookup.
+seed:
+  # The install stops with a clear message when a source Secret is missing. Set this to false only to render the chart
+  # without a cluster ("helm template", "helm lint"): the copied value is then a placeholder that does not work.
+  requireExisting: true
+  servers:
+    - slug: woo
+      name: WooCommerce
+      # woo-mcp, inside the cluster. It is not reachable from outside (decision 7).
+      url: http://woo-mcp.mcp-servers.svc.cluster.local:8080/mcp
+      callTimeoutMs: 30000
+      credential:
+        kind: bearer
+        source:
+          namespace: mcp-servers
+          secret: woo-mcp-auth
+          key: token
 
 postgres:
   image:

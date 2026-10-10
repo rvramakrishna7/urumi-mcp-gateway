@@ -1,0 +1,100 @@
+import express from 'express';
+import type { Response } from 'express';
+import type { Database } from '../db/queryable.ts';
+import type { Keyring } from '../crypto/credentials.ts';
+import type { Logger } from '../logger.ts';
+import { authenticate, callerOf, requireAdmin } from '../auth/middleware.ts';
+import { deleteServer, getServer, insertServer, listServers, patchServer, RegistryError } from '../registry/repository.ts';
+import { createServerSchema, describeIssues, patchServerSchema } from '../registry/validation.ts';
+
+export interface AdminDeps {
+  db: Database;
+  keyring: Keyring;
+  logger: Logger;
+  now?: () => number;
+}
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+
+function fail(res: Response, error: unknown, logger: Logger): void {
+  if (error instanceof RegistryError) {
+    res.status(error.code === 'conflict' ? 409 : 404).json({ error: error.code === 'conflict' ? 'conflict' : 'not found' });
+    return;
+  }
+  // Only the class name: an error from the database or from the crypto code must not carry a value into a log.
+  logger.error('admin request failed', { errorName: error instanceof Error ? error.name : 'unknown' });
+  res.status(500).json({ error: 'internal error' });
+}
+
+// The admin API of the registry. Every route needs an API key (401) and the admin role (403). The body is parsed only
+// after both checks, so an unauthenticated caller cannot make the gateway parse anything.
+export function createAdminRouter({ db, keyring, logger, now }: AdminDeps): express.Router {
+  const router = express.Router();
+  router.use(authenticate({ db, logger, now }), requireAdmin, express.json({ limit: '16kb' }));
+
+  router.get('/servers', async (_req, res) => {
+    try {
+      res.json({ servers: await listServers(db) });
+    } catch (error) {
+      fail(res, error, logger);
+    }
+  });
+
+  router.get('/servers/:id', async (req, res) => {
+    try {
+      const server = UUID.test(req.params.id) ? await getServer(db, req.params.id) : null;
+      if (!server) throw new RegistryError('not_found', 'server not found');
+      res.json({ server });
+    } catch (error) {
+      fail(res, error, logger);
+    }
+  });
+
+  router.post('/servers', async (req, res) => {
+    const parsed = createServerSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: 'invalid request', issues: describeIssues(parsed.error) });
+      return;
+    }
+    try {
+      const server = await insertServer(db, keyring, parsed.data, { createdBy: callerOf(res).userId, seedManaged: false });
+      logger.info('server registered', { slug: server.slug, by: callerOf(res).email });
+      res.status(201).json({ server });
+    } catch (error) {
+      fail(res, error, logger);
+    }
+  });
+
+  router.patch('/servers/:id', async (req, res) => {
+    if (!UUID.test(req.params.id)) {
+      res.status(404).json({ error: 'not found' });
+      return;
+    }
+    const parsed = patchServerSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: 'invalid request', issues: describeIssues(parsed.error) });
+      return;
+    }
+    try {
+      const server = await patchServer(db, keyring, req.params.id, parsed.data);
+      // Field names only, never values.
+      logger.info('server updated', { slug: server.slug, by: callerOf(res).email, fields: Object.keys(parsed.data).join(',') });
+      res.json({ server });
+    } catch (error) {
+      fail(res, error, logger);
+    }
+  });
+
+  router.delete('/servers/:id', async (req, res) => {
+    try {
+      const removed = UUID.test(req.params.id) ? await deleteServer(db, req.params.id) : false;
+      if (!removed) throw new RegistryError('not_found', 'server not found');
+      logger.info('server removed', { id: req.params.id, by: callerOf(res).email });
+      res.status(204).end();
+    } catch (error) {
+      fail(res, error, logger);
+    }
+  });
+
+  return router;
+}

@@ -2,11 +2,15 @@ import { randomUUID } from 'node:crypto';
 import express from 'express';
 import type { ErrorRequestHandler } from 'express';
 import type { Logger } from './logger.ts';
+import { createAdminRouter } from './routes/admin.ts';
+import type { AdminDeps } from './routes/admin.ts';
 
 export interface AppDeps {
   logger: Logger;
   // Resolves when the database answers and rejects when it does not.
   checkDatabase: () => Promise<void>;
+  // The registry admin API. Left out in tests of the health routes only.
+  admin?: AdminDeps;
 }
 
 export interface GatewayApp {
@@ -15,7 +19,7 @@ export interface GatewayApp {
   beginShutdown: () => void;
 }
 
-export function createApp({ logger, checkDatabase }: AppDeps): GatewayApp {
+export function createApp({ logger, checkDatabase, admin }: AppDeps): GatewayApp {
   const app = express();
   app.disable('x-powered-by');
   let shuttingDown = false;
@@ -54,6 +58,8 @@ export function createApp({ logger, checkDatabase }: AppDeps): GatewayApp {
       res.status(503).json({ status: 'database-unavailable' });
     }
   });
+
+  if (admin) app.use('/api/admin', createAdminRouter(admin));
 
   app.use((_req, res) => {
     res.status(404).json({ error: 'not found' });

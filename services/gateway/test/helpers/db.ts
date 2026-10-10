@@ -19,6 +19,7 @@ function config(database: string): pg.ClientConfig {
 export interface TestDatabase {
   name: string;
   connect: () => Promise<pg.Client>;
+  pool: () => pg.Pool;
   drop: () => Promise<void>;
 }
 
@@ -31,6 +32,7 @@ export async function createTestDatabase(): Promise<TestDatabase> {
   await admin.end();
 
   const open: pg.Client[] = [];
+  const pools: pg.Pool[] = [];
   return {
     name,
     connect: async () => {
@@ -39,7 +41,13 @@ export async function createTestDatabase(): Promise<TestDatabase> {
       open.push(client);
       return client;
     },
+    pool: () => {
+      const pool = new pg.Pool({ ...config(name), max: 4 });
+      pools.push(pool);
+      return pool;
+    },
     drop: async () => {
+      await Promise.all(pools.map((pool) => pool.end().catch(() => {})));
       await Promise.all(open.map((client) => client.end().catch(() => {})));
       const dropper = new pg.Client(config('postgres'));
       await dropper.connect();

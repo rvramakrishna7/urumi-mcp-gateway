@@ -1,3 +1,10 @@
+{{- /* A digest of the seed and of its credentials restarts the pod when either changes, because the seed is applied at start. A digest cannot be turned back into the value. */ -}}
+{{- $seedValues := list -}}
+{{- range .Values.seed.servers -}}
+{{- if .credential -}}
+{{- $seedValues = append $seedValues (include "gateway.seedCredentialValue" (dict "root" $ "entry" .)) -}}
+{{- end -}}
+{{- end -}}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -15,6 +22,8 @@ spec:
       labels:
         {{- include "gateway.labels" . | nindent 8 }}
         app.kubernetes.io/component: gateway
+      annotations:
+        checksum/seed: {{ cat (include "gateway.seedJson" .) (join "," $seedValues) | sha256sum }}
     spec:
       # The gateway never talks to the Kubernetes API, so it gets no ServiceAccount token.
       automountServiceAccountToken: false
@@ -62,6 +71,12 @@ spec:
               value: {{ .Values.gateway.port | quote }}
             - name: DB_POOL_MAX
               value: {{ .Values.gateway.dbPoolMax | quote }}
+            - name: MASTER_KEY_FILE
+              value: /secrets/master/key
+            - name: MASTER_KEY_ID
+              value: {{ .Values.gateway.masterKeyId | quote }}
+            - name: SEED_FILE
+              value: /config/seed/seed.json
             {{- include "gateway.dbEnv" . | nindent 12 }}
           # Liveness never calls the database or an upstream. Readiness calls the database (the gateway cannot
           # serve without it) and never an upstream: a slow or dead upstream must not take the gateway out of the
@@ -93,5 +108,28 @@ spec:
             - name: db-password
               mountPath: /secrets/db
               readOnly: true
+            - name: master-key
+              mountPath: /secrets/master
+              readOnly: true
+            - name: seed-credentials
+              mountPath: /secrets/seed
+              readOnly: true
+            - name: seed-config
+              mountPath: /config/seed
+              readOnly: true
       volumes:
         {{- include "gateway.dbSecretVolume" . | nindent 8 }}
+        - name: master-key
+          secret:
+            secretName: {{ include "gateway.masterKeySecretName" . }}
+            defaultMode: 0440
+            items:
+              - key: key
+                path: key
+        - name: seed-credentials
+          secret:
+            secretName: {{ include "gateway.seedSecretName" . }}
+            defaultMode: 0440
+        - name: seed-config
+          configMap:
+            name: {{ include "gateway.seedConfigName" . }}

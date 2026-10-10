@@ -81,16 +81,16 @@ describe('runMigrations (needs PostgreSQL)', { skip: skipWithoutDb }, () => {
   const tableNames = async (client: pg.Client) =>
     (await client.query<{ tablename: string }>("SELECT tablename FROM pg_tables WHERE schemaname = 'public' ORDER BY tablename")).rows.map((row) => row.tablename);
 
-  test('applies 0001 on an empty database and records its checksum', async () => {
+  test('applies every real migration on an empty database and records the checksums', async () => {
     const db = await fresh();
     try {
       const client = await db.connect();
       const files = await loadMigrationFiles();
       const result = await runMigrations(client, files, quiet);
-      assert.deepEqual(result, { applied: ['0001_init'], alreadyApplied: [], unknown: [] });
-      assert.deepEqual(await tableNames(client), ['api_keys', 'audit_log', 'schema_migrations', 'upstream_servers', 'upstream_tools', 'users']);
+      assert.deepEqual(result, { applied: files.map((file) => file.version), alreadyApplied: [], unknown: [] });
+      assert.deepEqual(await tableNames(client), ['api_keys', 'applied_seeds', 'audit_log', 'schema_migrations', 'upstream_servers', 'upstream_tools', 'users']);
       const { rows } = await client.query('SELECT version, checksum FROM schema_migrations');
-      assert.deepEqual(rows, [{ version: '0001_init', checksum: files[0]!.checksum }]);
+      assert.deepEqual(rows, files.map((file) => ({ version: file.version, checksum: file.checksum })));
     } finally {
       await db.drop();
     }
@@ -105,7 +105,7 @@ describe('runMigrations (needs PostgreSQL)', { skip: skipWithoutDb }, () => {
       const before = (await client.query('SELECT version, checksum, applied_at FROM schema_migrations')).rows;
       const again = await runMigrations(client, files, quiet);
       const after = (await client.query('SELECT version, checksum, applied_at FROM schema_migrations')).rows;
-      assert.deepEqual(again, { applied: [], alreadyApplied: ['0001_init'], unknown: [] });
+      assert.deepEqual(again, { applied: [], alreadyApplied: files.map((file) => file.version), unknown: [] });
       assert.deepEqual(after, before);
     } finally {
       await db.drop();
@@ -151,7 +151,7 @@ describe('runMigrations (needs PostgreSQL)', { skip: skipWithoutDb }, () => {
       assert.equal(finished, false, 'the runner must wait for the lock');
       await holder.query('SELECT pg_advisory_unlock($1)', [MIGRATION_LOCK_KEY]);
       const result = await running;
-      assert.deepEqual(result.applied, ['0001_init']);
+      assert.deepEqual(result.applied, (await loadMigrationFiles()).map((file) => file.version));
     } finally {
       await db.drop();
     }
