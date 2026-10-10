@@ -83,7 +83,9 @@ if (count($users) === 1) {
   foreach (array("edit_products", "publish_products", "edit_shop_orders", "edit_others_shop_orders") as $cap) {
     $check(user_can($user, $cap), "can " . $cap);
   }
-  foreach (array("manage_options", "install_plugins", "activate_plugins", "create_users", "delete_users", "promote_users") as $cap) {
+  // unfiltered_html must be absent: WordPress then filters the HTML that this account saves (kses), which is a second
+  // line of defence behind the plain-text check of the woo-mcp tools (docs/architecture.md, decision 19).
+  foreach (array("manage_options", "install_plugins", "activate_plugins", "create_users", "delete_users", "promote_users", "unfiltered_html") as $cap) {
     $check(!user_can($user, $cap), "cannot " . $cap);
   }
   // WooCommerce lets shop managers edit customer accounts, but not the administrator.
