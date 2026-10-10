@@ -2,7 +2,7 @@
 
 This document records the approved architecture decisions for the team MCP gateway. It is the source of truth for design. If a decision is not written here, it has not been made.
 
-Status: decisions 1 to 23 approved. Decisions 16 to 23 (the woo-mcp server, Step 7) were checked on the local cluster. Two decisions are still open and are listed at the end.
+Status: decisions 1 to 33 approved. Decisions 24 to 27 and 33 are implemented and checked (8a and 8b); decisions 28 to 32 are planned, and are the design for the sub-steps 8c to 8f. Decisions 16 to 23 (the woo-mcp server, Step 7) were checked on the local cluster. Two decisions are still open and are listed at the end.
 
 ## Overview
 
@@ -323,6 +323,100 @@ The readiness probe is `GET /readyz` and the liveness probe is `GET /healthz`. N
 - Tradeoff: readiness says nothing about the store. A store outage is visible as tool errors, so monitoring the store belongs elsewhere. One readiness probe failed with "connection refused" 2 seconds after the first start of the pod, before the server was listening; it is harmless and no `startupProbe` was added.
 - Alternatives rejected: readiness that calls WordPress, and liveness that calls WordPress (the reasoning of decision 14 applies).
 
+## Gateway backend (Step 8)
+
+Decisions 24 to 33 describe the gateway backend in `services/gateway` and its chart `charts/gateway` (release `gateway`, namespace `gateway`). Each decision is marked **implemented** (built and checked) or **planned** (decided, not built yet). A planned decision is the design that the next sub-steps (8c to 8f) must follow. Sub-step 8a was a spike in a scratch directory (nothing of it is in the repository), and 8b is the skeleton, the schema and the chart.
+
+### 24. PostgreSQL access is `pg` with plain SQL, and migrations are run by our own runner (implemented, 8b)
+
+The gateway uses the `pg` driver (8.23.1) with parameterised SQL, no ORM and no migration library. Migrations are forward-only files `migrations/0001_name.sql`. The runner (`src/db/migrate.ts`) records each file in `schema_migrations(version, checksum, applied_at)`, applies each pending file in its own transaction, takes a PostgreSQL advisory lock first, and refuses a file that was changed after it was applied. A version that the database has and this build has no file for (the database is ahead after a rollback) is logged as a warning and does not stop the start. A failed migration is rolled back and reports only the file version and the PostgreSQL error code, never SQL text or data.
+
+- Why: plain SQL is transparent and easy to explain, it needs no code generator, and it avoids tooling risk with TypeScript 7. Options not chosen: Drizzle or Kysely (type-safe queries, but more tooling), Prisma (generator step and a binary engine on Alpine), `node-pg-migrate` (a dependency that does not add much over about 100 lines).
+- How it runs: the Deployment has an **initContainer** `migrate` that runs `node dist/migrate.js` from the same image, before the server starts. The runner retries the connection for about two minutes, because PostgreSQL may still be starting. A Helm hook Job was not chosen: on a first install PostgreSQL is part of the same release, so a pre-install hook has no database, and with a post-install hook the server could start before the schema exists. With an initContainer the order is guaranteed, and a new image runs its migrations before the new server starts.
+- Rollback: migrations are forward-only. A `helm rollback` to an older image is safe only if the migrations since then were additive (new tables or nullable columns).
+- Verified (57 tests against a real PostgreSQL 17.9 in Docker, `npm run test:db`; `npm test` alone runs 27 tests and skips the database ones): the first run applies 0001; a second run applies nothing and leaves `applied_at` unchanged; **8 runners started at once** apply every file exactly once and none fails; a runner waits while another holds the lock; a failing migration leaves no table and no version row and releases the lock; an edited file is refused. In the cluster, a first install waited about 47 seconds for PostgreSQL to initialise (20 or more retries) and then applied 0001 with exit code 0, and a second gateway pod started at the same time found nothing to apply (`applied 0, alreadyApplied 1`).
+
+### 25. PostgreSQL is a StatefulSet on a pinned image, and its password is a file (implemented, 8b)
+
+`postgres:17.9-alpine3.23` (an exact version of PostgreSQL and of Alpine, never `latest` and not the floating alias `17.9-alpine`, which moves when Alpine is updated; version 17 was chosen over 18). One replica, a `volumeClaimTemplates` PVC that is kept when the StatefulSet is deleted or scaled down (the same shape as MariaDB, decision 11), a ClusterIP Service and a headless governing Service, and no Ingress.
+
+- The password of the database user is generated in the cluster on first install into the Secret `gateway-db` (random, reused through `lookup`, kept on `helm uninstall`, the same rules as decision 10) and mounted as a file. The official image reads it through `POSTGRES_PASSWORD_FILE`, and the gateway reads it through `DB_PASSWORD_FILE`. It is never in an environment variable or in a manifest.
+- Security: the pod runs as the user `postgres` (uid 70 on Alpine) with `runAsNonRoot`, `seccompProfile: RuntimeDefault`, `allowPrivilegeEscalation: false`, `readOnlyRootFilesystem: true` and all capabilities dropped. The places that PostgreSQL writes besides the data are volumes (`/var/run/postgresql` and `/tmp` as `emptyDir`), and `PGDATA` is a sub-directory of the data volume. `automountServiceAccountToken` is false.
+- Probes: startup and readiness use `pg_isready`, and liveness is a TCP check on port 5432 (the same reasoning as decision 14: liveness must not depend on more than the process).
+- Verified: in the pod, `CapEff` was zero, and a write to `/etc` failed with "Read-only file system". A test row (id `a6d8e2b6-...`) written to `users` was **identical after `kubectl rollout restart statefulset/postgres`**: the pod uid changed, the PVC stayed the same, the log said "Database directory appears to contain a database; Skipping initialization", and the gateway pod kept 0 restarts. A second `helm upgrade` left the password Secret (digest and resourceVersion), the StatefulSet (generation and pod), the Deployment and the PVC identical. The scan of the password (raw and base64, with a control that finds both) found nothing in the logs of the gateway, the migrate initContainer, PostgreSQL and the test Pod, in the specs of the namespace, in `kubectl describe` or in the rendered manifest without Secrets.
+
+### 26. The schema of migration 0001 (implemented, 8b)
+
+Five tables, with the rules in the database as constraints (57 tests check them):
+
+```text
+users            id uuid, email (lower case, unique), role admin|member, status invited|active|disabled,
+                 password_hash, invite_token_hash (SHA-256) + invite_expires_at, created_at, created_by, disabled_at
+api_keys         id, user_id (cascade), name, key_prefix (display only), key_hash (32 bytes, unique), created_at,
+                 last_used_at, revoked_at (the row stays when a key is revoked)
+upstream_servers id, slug, name, url, enabled, call_timeout_ms (1000 to 120000, default 30000),
+                 credential_* (kind bearer|header, header name, ciphertext, 12-byte nonce, key id, updated_at: all or none),
+                 status unknown|connected|unreachable, status_reason, status_checked_at, last_success_at,
+                 seed_managed, created_at, updated_at, created_by
+upstream_tools   (server_id, name) primary key, description (at most 4000), input_schema jsonb, annotations jsonb,
+                 description_hash (SHA-256), skipped_reason, fetched_at       (cascade with the server)
+audit_log        see the two-phase audit below
+```
+
+- **The slug is immutable and has no underscore** (`^[a-z][a-z0-9-]{0,19}$`). Exposed tool names are `<slug>__<tool>` (decision 5), so the first `__` in an exposed name can only be the separator. It never changes after creation, so tool names stay stable. "Disabled" is `enabled = false` and is not stored as a status. Dashboard sessions are designed but have no table yet: they are created with Step 10.
+- **Two-phase audit.** `audit_log` has one row per call. Phase 1 inserts the row **before** the upstream is called, with the outcome `started`. Phase 2 updates the same row with the outcome, `finished_at` and `duration_ms`. A constraint enforces it: `started` means no end and no duration, anything else needs both. Outcomes: `started`, `ok`, `error`, `timeout`, `unreachable`, `unknown_tool`, `denied` and `interrupted`. `interrupted` is for a row that stayed `started` because the gateway stopped before the call ended; the sweeper that sets it is not built yet. A partial index on `outcome = 'started'` finds such rows. `user_email` and `server_slug` are copied into the row, so it still names them after the user or the server is deleted. `requested_name` is the name the caller used, `tool` the name at the upstream, and `via` is `mcp` or `chat`. **Arguments and results are never stored**, because they can hold customer data. `error_kind` is a short code and never a message from an upstream.
+- The rule for the gateway (planned, 8d): **no tool call runs without an audit row.** If the phase 1 insert fails, the call is not made and the caller gets an `isError` result. If the phase 2 update fails, it is logged loudly and the result is still returned.
+
+### 27. The gateway pod, its probes and its test (implemented, 8b)
+
+The Deployment has one replica, the `migrate` initContainer of decision 24 and the server. `GET /healthz` is the liveness probe and never looks at the database. `GET /readyz` is the readiness probe: it runs `SELECT 1` with a 2 second deadline and answers 503 `database-unavailable` (without saying why) when that fails, and 503 `shutting-down` after SIGTERM. **Neither probe calls an upstream MCP server**: a slow or dead upstream must not take the gateway out of the Service. The pod uses the same security context as woo-mcp (uid 10001, `runAsNonRoot`, read-only root filesystem, all capabilities dropped, `RuntimeDefault` seccomp, no ServiceAccount token), has requests and limits, mounts the password file with mode 0440, and has no Ingress yet. The image `gateway:0.1.0` (257 MB) has three stages, production dependencies only, and carries the SQL files.
+
+- `helm test` runs a pod that connects with the application user and prints only names, counts and PASS or FAIL: version 17.9, the recorded migrations, the six tables, a row count of each table, `/healthz`, `/readyz` and a 404. Result: Succeeded, 12 checks.
+- A first version of the test script crashed because it was mounted at `/scripts`, where Node does not find `/app/node_modules`; the script now loads `pg` from the image explicitly. Lesson: read the exit code of the test Pod, and both suites of the `helm test` output (the first block is the ConfigMap hook).
+- Tradeoff: the readiness probe needs three failures in a row (5 seconds apart). A PostgreSQL restart of about 7 seconds did not turn the gateway NotReady. The pool logs one "database connection error" (the class name only) and recovers. The 503 of `/readyz` was verified in unit tests, not in the cluster (see the known limitations).
+
+### 28. Upstream connections, the cached tool list and timeouts (planned, 8d)
+
+- **One connection per call.** For every upstream call the gateway connects with the SDK client, calls and closes. Upstreams are stateless, so a held connection would only add state to heal, and failures stay isolated. Measured in the spike with SDK 2.3.1: one connect, call and close is **4 HTTP requests** (`initialize`, `initialized`, a GET that answers 405, and the call), about 10 to 15 ms on loopback (the cost inside the cluster is not measured yet). Pooling is the answer only if latency becomes a problem.
+- **The tool list is cached** in `upstream_tools` and refreshed by a background **poller every 15 seconds** (with jitter, in parallel, each upstream with its own 5 second timeout). It is also refreshed at once when a server is added, edited or enabled, and an admin can ask for a refresh. `tools/list` only reads the database, so a slow upstream cannot slow the listing. **This replaces the sentence in "Tool call flow" below** ("Tool listing asks every enabled upstream in parallel"); that text is updated when 8d is implemented, and until then it describes the first plan.
+- **Status.** Disabled when `enabled = false` (no probing). Otherwise Connected or Unreachable from the last probe or call, with a reason such as timeout, refused, 401 or protocol error, and Unknown before the first probe. Every call also updates it. **An Unreachable server contributes no tools to the list.** A call from a stale list is still tried once, because the status may be old.
+- **Timeouts:** connect and initialise 3 seconds, `tools/list` 5 seconds, `tools/call` 30 seconds by default (per server `call_timeout_ms`, at most 120 seconds, and longer than the 10 seconds that woo-mcp waits for WooCommerce). Responses are capped at 2 MB.
+- **What the caller sees**, always as a result with `isError: true` and a plain sentence, never the URL, a credential or an upstream body: slow ("did not answer within 30 s"), dead ("is unreachable"), and for a disabled or unknown tool "Unknown tool" (a member does not learn that a disabled server exists). A tool error from the upstream passes through. Other upstreams run in separate calls, so they are not affected. SDK client errors are mapped by class and status (`SdkHttpError.status`, `SdkError` code `REQUEST_TIMEOUT`, `TypeError` for a refused connection), never by message, because the message can hold the upstream body.
+
+### 29. Names and descriptions from an upstream are untrusted (planned, 8d)
+
+An upstream, or an admin who registers a bad one, controls every tool name and description that the gateway shows to a model. The gateway validates each name against a strict pattern and **skips a tool that fails it** (the reason goes into `skipped_reason`), caps the description length (4000 characters, also a database constraint), strips control characters, invisible characters and direction overrides (the same rules as `safeText` of woo-mcp), and stores the SHA-256 of the description as received, to notice a later change. An exposed name must be at most 64 characters (a limit of model APIs), and a name that would be longer is skipped, not cut. A tool name from an upstream can never be confused with another server's slug: the slug has no underscore, and the exposed name is built by the gateway as `<slug>__<name>`. Tool output from an upstream is untrusted data too (decision 19): the gateway passes it on and the agent must treat it as data.
+
+### 30. Upstream credentials are encrypted at rest with AES-256-GCM (planned, 8c)
+
+A static credential (a bearer token or a header) is encrypted in the application before it reaches PostgreSQL, with the built-in `node:crypto` (no dependency): AES-256-GCM, a random 12 byte nonce per row, a key id for rotation, and the server id as additional authenticated data. The master key is 32 random bytes in a Kubernetes Secret created by the chart (random on first install, kept) and mounted as a file. Options not chosen: plaintext in the column (a database backup would leak it), a Kubernetes Secret per upstream through the API (needs RBAC and API access), Vault or a KMS (too large for this project).
+
+- **The API never returns the value.** It returns `credential: {set: true, kind, header, updatedAt}`. The list queries do not select the ciphertext column. An update has three cases: the field omitted keeps the credential, `null` removes it, an object replaces it. The value is decrypted only when an upstream call is built, in memory, and it is never in a log or an error.
+- Tradeoff: someone who has both the database and the master key can read the credentials. If the master key is lost, the credentials cannot be read and an admin enters them again. There is one key id for now; rotation re-encrypts the rows with a new key.
+
+### 31. woo-mcp is registered at install, the URL policy, and identity by CLI (planned, 8c and 8f)
+
+- **Seed at install.** The gateway chart copies the bearer token of woo-mcp from the Secret `woo-mcp-auth` in the namespace `mcp-servers` with `lookup` (the same pattern as decision 22) into its own Secret, and a ConfigMap carries the server list without secrets. At start the gateway inserts a row for each entry with `INSERT ... ON CONFLICT (slug) DO NOTHING`, with the token encrypted. While `seed_managed` is true the URL and the credential follow the values on every start (so a token rotation arrives); an edit by an admin sets it to false and the seed no longer touches that row. The install order is store, mcp-servers, gateway, and the gateway install stops with a clear message if the Secret is missing. There is no manual step.
+- **URL policy.** The gateway accepts `http` and `https` URLs without credentials, a query string or a fragment. Private and cluster-internal addresses are allowed, because woo-mcp itself is one. **SSRF is a threat-model item**: an admin can register an address that points at another service in the cluster. The mitigation is a later allowlist and the NetworkPolicies of the security step.
+- **Identity in Step 8.** Users and API keys are created by a command-line tool in the gateway image (run with `kubectl exec`, the key is shown once), until the dashboard login and the invite flow come with Step 10. The first admin is created at install from a Secret (decision 3).
+
+### 32. The public MCP endpoint (decided from the spike, planned, 8e)
+
+One endpoint, `/mcp`, built with `createMcpHandler(factory)` of the SDK in its **default mode** (`legacy` stateless), a low-level `Server` created by the factory for every request, and `authInfo` set by our API-key middleware, which checks the key on every request (so a revoked key is rejected on the next one). It serves modern (2026-07-28) and 2025-era clients on the same URL. `legacy: 'reject'` is not used: it would exclude MCP Inspector.
+
+- The factory registers `tools/list` and `tools/call` handlers that call the internal interface `listTools(caller)` and `callTool(caller, name, args)` (decision 1b), with the caller taken from `authInfo`. `McpServer.registerTool` is not used, because the list depends on the user and changes at run time.
+- Stateless means no session and no push of `tools/list_changed`. The consequence for clients is in decision 33.
+- Verified in the spike with a throwaway server (not in the repository): a low-level `Server` with a dynamic, per-user `tools/list` works in stateless mode on both the `createMcpHandler` endpoint and the per-request transport of woo-mcp. User A (admin) listed 3 tools and user B (member) listed 2, through curl and through a real Claude Code.
+
+### 33. What the spike found about MCP clients (verified, 8a)
+
+Tested against the spike server with a Claude Code 2.1.294 (`--mcp-config` and `--strict-mcp-config`, so no configuration was changed) and MCP Inspector 2.10.1 in CLI mode. **Cursor was not tested.** The brief accepts Claude Code or MCP Inspector, so the demo and the tests use those two.
+
+- **Connection with only a URL and a bearer key:** both connect and call tools. Claude Code speaks the modern protocol: it sends `server/discover` with the protocol version `2026-07-28`, then `tools/list` and `tools/call`, with no `initialize`, no session and no GET. Against an endpoint that does not know `server/discover` it falls back to `initialize`, `initialized`, a GET (which it accepts with 405), `tools/list` and `tools/call`. MCP Inspector always uses the 2025-era flow. A modern-only endpoint answers it `-32022 Unsupported protocol version`, which is why decision 32 uses the default mode.
+- **401:** with a wrong or revoked key, Claude Code tries `server/discover` and `initialize`, gets 401 twice, and reports the server as failed with "HTTP 401 Unauthorized"; it does not probe for OAuth and does not retry. With **no** `Authorization` header it starts OAuth discovery (four `/.well-known/...` GETs and a `POST /register`, all 404 on our server) and then reports "Dynamic Client Registration rejected (HTTP 404)". The gateway therefore answers 404 on those paths, and they are the entry points if OAuth is ever added (a stand-out item of the brief). MCP Inspector in CLI mode answers a 401 with `auth_required` (it wants an interactive OAuth login and there is no terminal), exit code 3.
+- **A changed tool list:** in a long Claude Code session, `tools/list` was called **once, at connect**. After the server's list changed, a new tool was "not available" to the client, a removed tool was still offered to the model, and calling it returned the server's `Unknown tool` as `isError`. Claude Code never opened a `subscriptions/listen` stream, so a push notification would not have helped. **For the demo and the docs: after an admin disables an upstream, the external client must reconnect (a new session) to see its tools disappear, and a call from a stale list is rejected by the gateway.** MCP Inspector in CLI mode asks again on every invocation.
+- Not tested: Cursor, the web UI of MCP Inspector, a reconnect with `/mcp` in an interactive Claude Code, the Host header check behind the Ingress host `gateway.urumi.test`, and a real `subscriptions/listen` client.
+
 ## Known limitations
 
 - The startup probe still uses `/wp-login.php`. If MariaDB is down for more than five minutes (60 checks, 5 seconds apart) while the WordPress container is starting, the kubelet kills and restarts it. This follows from the probe configuration and was not tested.
@@ -346,6 +440,14 @@ The readiness probe is `GET /readyz` and the liveness probe is `GET /healthz`. N
 - `helm template` and `helm lint` of `charts/mcp-servers` need `--set wooMcp.store.requireExisting=false`, because `lookup` returns nothing without a cluster. The Secret rendered that way holds a placeholder and must not be installed.
 - Like decision 10, the Secrets of `mcp-servers` are stored base64 encoded in the Helm release metadata. `values-prod.yaml` of this chart is only linted, not deployed.
 
+- Gateway database, the application user is a **superuser**: the official PostgreSQL image makes `POSTGRES_USER` one, and the gateway uses it for both migrations and normal queries. Separate roles (an owner for the migrations and a limited role for the server) are a later hardening step.
+- Gateway, `/readyz` answering 503 when the database is lost was verified in unit tests only. In the cluster, a PostgreSQL restart of about 7 seconds did not turn the gateway NotReady, because a probe must fail three times in a row (5 seconds apart). The log of the PostgreSQL pod from before that restart was not kept, so the password scan of that pod covers the new pod only.
+- Gateway, there is no NetworkPolicy for PostgreSQL or for the gateway yet (left to the security step, decision 7). Any pod in the cluster can reach PostgreSQL on port 5432 and needs only the password.
+- Gateway, audit rows that stay `started` because the gateway stopped during a call need a sweeper that sets `interrupted`. It is not built.
+- Gateway, the Secret `gateway-db` is kept on `helm uninstall` and is stored base64 encoded in the Helm release metadata (the same as decision 10). Deleting the namespace is the only full wipe.
+- Gateway, a client such as Claude Code reads the tool list once, at connect (decision 33), so it must reconnect to see a change. Cursor was not tested; only Claude Code and MCP Inspector were.
+- Decisions 28 to 32 are planned and are not implemented: until 8c to 8e are done, the gateway has no registry, no upstream client, no API keys and no MCP endpoint.
+
 ## Credential domains
 
 Two separate kinds of credential exist and they never mix.
@@ -357,6 +459,7 @@ Two separate kinds of credential exist and they never mix.
 | Upstream credential | Gateway and one upstream MCP server | Gateway side only | Admin when entering it; never returned afterwards |
 | WooCommerce consumer key and secret | woo-mcp and WordPress; only an OAuth 1.0a signature in the `Authorization` header travels (decisions 15 and 17) | Kubernetes Secret `woo-mcp-api` in `store` (source of truth); a copy of the two values in the Secret `woo-mcp-store-api` in `mcp-servers`, refreshed by `helm upgrade`; the WordPress database holds the key hash and the secret in plaintext | woo-mcp (mounted as files), the store bootstrap Job and test Pod; anyone who can read the Secrets or the table `woocommerce_api_keys` |
 | woo-mcp bearer token | The gateway and woo-mcp, in the header `Authorization: Bearer` (decision 18) | Kubernetes Secret `woo-mcp-auth` in `mcp-servers`, mounted as a file; the gateway will hold its own copy as the upstream credential | woo-mcp, and anyone who can read the Secret; never a browser or an MCP client |
+| Gateway database password | The gateway pods and PostgreSQL (decision 25) | Kubernetes Secret `gateway-db` in `gateway`, mounted as a file; random on first install and kept | The gateway and PostgreSQL pods, and anyone who can read the Secret; never in an environment variable, a manifest or a log |
 
 The gateway never forwards a user's API key to an upstream, and never returns an upstream credential to a browser or an MCP client.
 
@@ -373,7 +476,7 @@ client or chat agent
   -> client or chat agent: result or a clear error
 ```
 
-Tool listing asks every enabled upstream in parallel, each with its own timeout. An upstream that fails or times out is marked unreachable and contributes no tools; the others are returned normally.
+Tool listing asks every enabled upstream in parallel, each with its own timeout. (This is the first plan. Decision 28 replaces it with a cached list that a poller refreshes every 15 seconds; this paragraph is updated when that is implemented.) An upstream that fails or times out is marked unreachable and contributes no tools; the others are returned normally.
 
 ## Open decisions
 
