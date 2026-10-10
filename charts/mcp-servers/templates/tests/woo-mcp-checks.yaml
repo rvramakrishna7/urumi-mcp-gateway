@@ -1,0 +1,93 @@
+{{- /*
+"helm test" runs files/checks.mjs in a short-lived Pod with the woo-mcp image, inside the namespace of the release.
+The script prints names, counts and PASS or FAIL, never a secret value. The Pod has no probes: like the
+Jobs of the store chart it is a run-to-completion workload, bounded by activeDeadlineSeconds and resource limits.
+*/ -}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: woo-mcp-checks
+  labels:
+    {{- include "mcp-servers.labels" . | nindent 4 }}
+    app.kubernetes.io/component: test
+  annotations:
+    helm.sh/hook: test
+    helm.sh/hook-weight: "-1"
+    helm.sh/hook-delete-policy: before-hook-creation
+data:
+  checks.mjs: |
+    {{- .Files.Get "files/checks.mjs" | nindent 4 }}
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: woo-mcp-checks
+  labels:
+    {{- include "mcp-servers.labels" . | nindent 4 }}
+    app.kubernetes.io/component: test
+  annotations:
+    helm.sh/hook: test
+    helm.sh/hook-weight: "0"
+    # The previous test Pod is replaced on the next run, so its logs stay available until then.
+    helm.sh/hook-delete-policy: before-hook-creation
+spec:
+  restartPolicy: Never
+  activeDeadlineSeconds: 120
+  automountServiceAccountToken: false
+  {{- with .Values.wooMcp.imagePullSecrets }}
+  imagePullSecrets:
+    {{- range . }}
+    - name: {{ . | quote }}
+    {{- end }}
+  {{- end }}
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 10001
+    runAsGroup: 10001
+    fsGroup: 10001
+    seccompProfile:
+      type: RuntimeDefault
+  containers:
+    - name: checks
+      image: "{{ .Values.wooMcp.image.repository }}:{{ .Values.wooMcp.image.tag }}"
+      imagePullPolicy: {{ .Values.wooMcp.image.pullPolicy }}
+      command: ["node", "/scripts/checks.mjs"]
+      env:
+        # The full Service name, because woo-mcp checks the Host header.
+        - name: WOO_MCP_URL
+          value: "http://woo-mcp.{{ .Release.Namespace }}.svc.{{ .Values.clusterDomain }}:{{ .Values.wooMcp.port }}"
+      securityContext:
+        allowPrivilegeEscalation: false
+        readOnlyRootFilesystem: true
+        capabilities:
+          drop:
+            - ALL
+      resources:
+        requests:
+          cpu: 25m
+          memory: 64Mi
+        limits:
+          cpu: 250m
+          memory: 128Mi
+      volumeMounts:
+        - name: scripts
+          mountPath: /scripts
+          readOnly: true
+        - name: store-api
+          mountPath: /secrets/store-api
+          readOnly: true
+        - name: auth
+          mountPath: /secrets/auth
+          readOnly: true
+  volumes:
+    - name: scripts
+      configMap:
+        name: woo-mcp-checks
+    - name: store-api
+      secret:
+        secretName: {{ include "mcp-servers.wooMcp.storeApiSecretName" . }}
+        defaultMode: 0440
+    - name: auth
+      secret:
+        secretName: {{ include "mcp-servers.wooMcp.authSecretName" . }}
+        defaultMode: 0440

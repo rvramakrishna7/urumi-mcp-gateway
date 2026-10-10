@@ -1,0 +1,11 @@
+# Overrides for the local k3d cluster (cluster/k3d-config.yaml).
+# The image must be imported first: k3d image import woo-mcp:0.1.0 -c urumi
+# Use with: helm upgrade --install mcp-servers charts/mcp-servers -n mcp-servers --create-namespace -f charts/mcp-servers/values-local.yaml
+# The store chart must be installed first (it creates the Secret that holds the WooCommerce key).
+
+wooMcp:
+  store:
+    # The public hostname of the local store (docs/architecture.md, decision 8). It must match store.host
+    # and store.scheme in charts/store/values-local.yaml.
+    publicUrl: http://store.urumi.test
+    timezone: Asia/Kolkata

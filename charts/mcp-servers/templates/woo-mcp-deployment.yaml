@@ -1,0 +1,108 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: woo-mcp
+  labels:
+    {{- include "mcp-servers.labels" . | nindent 4 }}
+    app.kubernetes.io/component: woo-mcp
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "mcp-servers.wooMcp.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "mcp-servers.labels" . | nindent 8 }}
+        app.kubernetes.io/component: woo-mcp
+      annotations:
+        # woo-mcp reads the key files once, at start. A new key from the store changes this hash (it is a hash,
+        # not the value), so the pod is restarted by the next "helm upgrade". The token is not part of it: it is
+        # random on first install and the hash must stay the same on every later upgrade.
+        checksum/store-api: {{ include "mcp-servers.wooMcp.storeApi" . | sha256sum }}
+    spec:
+      # woo-mcp never talks to the Kubernetes API, so it gets no ServiceAccount token.
+      automountServiceAccountToken: false
+      {{- with .Values.wooMcp.imagePullSecrets }}
+      imagePullSecrets:
+        {{- range . }}
+        - name: {{ . | quote }}
+        {{- end }}
+      {{- end }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        # Lets the group of the process read the mounted Secret files (mode 0440).
+        fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: woo-mcp
+          image: "{{ .Values.wooMcp.image.repository }}:{{ .Values.wooMcp.image.tag }}"
+          imagePullPolicy: {{ .Values.wooMcp.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.wooMcp.port }}
+          # Only paths and settings here. The key, the secret and the token are read from the mounted files.
+          env:
+            - name: PORT
+              value: {{ .Values.wooMcp.port | quote }}
+            - name: ALLOWED_HOSTS
+              value: {{ include "mcp-servers.wooMcp.allowedHosts" . | quote }}
+            - name: MCP_AUTH_TOKEN_FILE
+              value: /secrets/auth/token
+            - name: WOO_BASE_URL
+              value: {{ include "mcp-servers.wooMcp.baseUrl" . | quote }}
+            - name: WOO_PUBLIC_URL
+              value: {{ required "wooMcp.store.publicUrl is required" .Values.wooMcp.store.publicUrl | quote }}
+            - name: WOO_CONSUMER_KEY_FILE
+              value: /secrets/store-api/consumer-key
+            - name: WOO_CONSUMER_SECRET_FILE
+              value: /secrets/store-api/consumer-secret
+            - name: STORE_TIMEZONE
+              value: {{ .Values.wooMcp.store.timezone | quote }}
+            - name: WOO_REQUEST_TIMEOUT_MS
+              value: {{ .Values.wooMcp.requestTimeoutMs | quote }}
+          # Neither probe calls WordPress: a store outage must not take woo-mcp out of the Service or restart it,
+          # because it answers tool calls with an error result in that case. /readyz answers 503 only while the
+          # process shuts down. The health routes need no token and ignore the Host header (the kubelet probes the pod IP).
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            periodSeconds: 5
+            timeoutSeconds: 2
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 20
+            timeoutSeconds: 2
+            failureThreshold: 3
+          resources:
+            {{- toYaml .Values.wooMcp.resources | nindent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          volumeMounts:
+            - name: store-api
+              mountPath: /secrets/store-api
+              readOnly: true
+            - name: auth
+              mountPath: /secrets/auth
+              readOnly: true
+      volumes:
+        - name: store-api
+          secret:
+            secretName: {{ include "mcp-servers.wooMcp.storeApiSecretName" . }}
+            defaultMode: 0440
+        - name: auth
+          secret:
+            secretName: {{ include "mcp-servers.wooMcp.authSecretName" . }}
+            defaultMode: 0440

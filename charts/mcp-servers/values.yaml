@@ -1,0 +1,49 @@
+# Default values for the mcp-servers chart.
+# Environment-specific settings belong in values-local.yaml and values-prod.yaml.
+# This file must never contain real credentials.
+
+# Domain suffix of Services in the cluster. It is only used to build the host names that woo-mcp accepts.
+clusterDomain: cluster.local
+
+wooMcp:
+  image:
+    repository: woo-mcp
+    # Pinned to an exact version. Never use latest.
+    tag: "0.1.0"
+    pullPolicy: IfNotPresent
+  # Names of Secrets (of type kubernetes.io/dockerconfigjson) that hold registry credentials. Empty for the
+  # local cluster, where the image is imported with "k3d image import".
+  imagePullSecrets: []
+
+  port: 8080
+  # Per-request timeout for calls from woo-mcp to WooCommerce.
+  requestTimeoutMs: 10000
+  # Host names that woo-mcp accepts in addition to its own Service names (DNS rebinding protection).
+  # localhost and 127.0.0.1 are what "kubectl port-forward" sends.
+  extraAllowedHosts:
+    - localhost
+    - 127.0.0.1
+
+  store:
+    # Where the WooCommerce key is read from. It is the Secret created by the store chart (decision 15).
+    namespace: store
+    secretName: woo-mcp-api
+    # The WordPress Service that woo-mcp calls. The address is built as <service>.<namespace>.svc.<clusterDomain>.
+    serviceName: wordpress
+    # The public home URL of the store. The OAuth signature is computed for it. It must be exactly the home
+    # URL of WordPress, so it is set per environment. Required.
+    publicUrl: ""
+    # IANA timezone of the store. It must match the timezone set in the store chart. It decides what "today" means.
+    timezone: Asia/Kolkata
+    # The install stops with a clear message when the store Secret is missing. Set this to false only to
+    # render the chart without a cluster ("helm template", "helm lint"): the Secret then holds a placeholder
+    # that does not work.
+    requireExisting: true
+
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi

@@ -1,0 +1,15 @@
+woo-mcp is installed in namespace "{{ .Release.Namespace }}". It is reachable only inside the cluster, at:
+
+  http://woo-mcp.{{ .Release.Namespace }}.svc.{{ .Values.clusterDomain }}:{{ .Values.wooMcp.port }}/mcp
+
+Callers must send the header "Authorization: Bearer <token>". The token is generated on first install and kept in the
+Secret "{{ include "mcp-servers.wooMcp.authSecretName" . }}". Read it in your own terminal (this prints it, so do not paste it anywhere):
+
+  kubectl get secret {{ include "mcp-servers.wooMcp.authSecretName" . }} -n {{ .Release.Namespace }} -o jsonpath='{.data.token}' | base64 -d; echo
+
+The WooCommerce key and secret are copied from the Secret "{{ .Values.wooMcp.store.secretName }}" in the namespace "{{ .Values.wooMcp.store.namespace }}".
+After a key rotation in the store, run "helm upgrade" again: the pod restarts with the new key.
+
+Check the server with:
+
+  helm test {{ .Release.Name }} -n {{ .Release.Namespace }}
