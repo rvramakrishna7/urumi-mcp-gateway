@@ -48,7 +48,7 @@ const mcp = createMcpRouter({ db: pool, gateway, logger, allowedHosts: security.
 const { app, beginShutdown } = createApp({
   logger,
   checkDatabase: () => checkDatabase(pool),
-  admin: { db: pool, keyring, logger },
+  admin: { db: pool, keyring, logger, onServerChanged: () => poller.refreshNow() },
   mcp: mcp.router,
 });
 const server = app.listen(config.port, () => {

@@ -12,6 +12,9 @@ export interface AdminDeps {
   keyring: Keyring;
   logger: Logger;
   now?: () => number;
+  // Called after a server was created or changed (enabled, disabled, edited, new credential). It is not awaited, so a
+  // slow or failing refresh cannot change the answer to the admin. It is the poller's refreshNow in production.
+  onServerChanged?: () => Promise<unknown> | void;
 }
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
@@ -28,7 +31,18 @@ function fail(res: Response, error: unknown, logger: Logger): void {
 
 // The admin API of the registry. Every route needs an API key (401) and the admin role (403). The body is parsed only
 // after both checks, so an unauthenticated caller cannot make the gateway parse anything.
-export function createAdminRouter({ db, keyring, logger, now }: AdminDeps): express.Router {
+export function createAdminRouter({ db, keyring, logger, now, onServerChanged }: AdminDeps): express.Router {
+  // Starts the refresh and returns at once. A rejection (or a throw) is logged here: nobody awaits it, and an unhandled
+  // rejection would stop the process.
+  const refreshInBackground = (): void => {
+    if (!onServerChanged) return;
+    const failed = (error: unknown) => logger.error('refresh after a server change failed', { errorName: error instanceof Error ? error.name : 'unknown' });
+    try {
+      Promise.resolve(onServerChanged()).catch(failed);
+    } catch (error) {
+      failed(error);
+    }
+  };
   const router = express.Router();
   router.use(authenticate({ db, logger, now }), requireAdmin, express.json({ limit: '16kb' }));
 
@@ -60,6 +74,7 @@ export function createAdminRouter({ db, keyring, logger, now }: AdminDeps): expr
       const server = await insertServer(db, keyring, parsed.data, { createdBy: callerOf(res).userId, seedManaged: false });
       logger.info('server registered', { slug: server.slug, by: callerOf(res).email });
       res.status(201).json({ server });
+      refreshInBackground();
     } catch (error) {
       fail(res, error, logger);
     }
@@ -80,6 +95,7 @@ export function createAdminRouter({ db, keyring, logger, now }: AdminDeps): expr
       // Field names only, never values.
       logger.info('server updated', { slug: server.slug, by: callerOf(res).email, fields: Object.keys(parsed.data).join(',') });
       res.json({ server });
+      refreshInBackground();
     } catch (error) {
       fail(res, error, logger);
     }
