@@ -10,6 +10,7 @@ import { applySeed, loadSeedFile, SeedError } from './registry/seed.ts';
 import { createMcpRouter } from './mcp/router.ts';
 import { sessionAuthConfig } from './auth/session.ts';
 import { createAuthRouter } from './routes/auth.ts';
+import { createMeKeysRouter } from './routes/me-keys.ts';
 import { applyBootstrap, BootstrapError, readBootstrapToken } from './identity/invites.ts';
 import { createPoller } from './upstream/poller.ts';
 
@@ -67,6 +68,7 @@ const { app, beginShutdown } = createApp({
   admin: { db: pool, keyring, logger, sessions, onServerChanged: () => poller.refreshNow() },
   mcp: mcp.router,
   auth: createAuthRouter({ db: pool, logger, sessions }),
+  me: createMeKeysRouter({ db: pool, logger, sessions }),
 });
 const server = app.listen(config.port, () => {
   logger.info('listening', { port: config.port });

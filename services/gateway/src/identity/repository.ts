@@ -1,4 +1,5 @@
-import type { Queryable } from '../db/queryable.ts';
+import { withTransaction } from '../db/queryable.ts';
+import type { Database, Queryable } from '../db/queryable.ts';
 import { generateApiKey } from './keys.ts';
 
 export type Role = 'admin' | 'member';
@@ -84,6 +85,49 @@ export async function revokeApiKey(db: Queryable, keyId: string): Promise<boolea
   const result = await db.query(
     'UPDATE api_keys SET revoked_at = COALESCE(revoked_at, now()) WHERE id = $1 RETURNING id',
     [keyId],
+  );
+  return (result.rowCount ?? 0) > 0;
+}
+
+// The keys of one user, for the dashboard. The user id comes from the session, never from the request, and is part of the
+// WHERE clause (CLAUDE.md, non-negotiable rules). The hash is never selected.
+export async function listKeysOfUser(db: Queryable, userId: string): Promise<KeyView[]> {
+  const result = await db.query(
+    `SELECT id, name, key_prefix, created_at, last_used_at, revoked_at
+     FROM api_keys WHERE user_id = $1 ORDER BY created_at, id`,
+    [userId],
+  );
+  return result.rows.map(toKey);
+}
+
+export const MAX_ACTIVE_KEYS_PER_USER = 10;
+
+export type CreateKeyResult = { ok: true; key: string; view: KeyView } | { ok: false; reason: 'limit' | 'no_user' };
+
+// The cap counts active keys only. The user row is locked for the length of the transaction, so two requests of one user
+// cannot both count 9 and both insert (a count followed by an insert would race under READ COMMITTED).
+export async function createKeyForUser(db: Database, userId: string, name: string): Promise<CreateKeyResult> {
+  return withTransaction(db, async (client) => {
+    const user = await client.query("SELECT id FROM users WHERE id = $1 AND status = 'active' FOR UPDATE", [userId]);
+    if (user.rowCount === 0) return { ok: false, reason: 'no_user' } as const;
+    const active = await client.query('SELECT count(*)::int AS c FROM api_keys WHERE user_id = $1 AND revoked_at IS NULL', [userId]);
+    if (active.rows[0].c >= MAX_ACTIVE_KEYS_PER_USER) return { ok: false, reason: 'limit' } as const;
+    const generated = generateApiKey();
+    const result = await client.query(
+      `INSERT INTO api_keys (user_id, name, key_prefix, key_hash) VALUES ($1, $2, $3, $4)
+       RETURNING id, name, key_prefix, created_at, last_used_at, revoked_at`,
+      [userId, name, generated.displayPrefix, generated.hash],
+    );
+    return { ok: true, key: generated.key, view: toKey(result.rows[0]) } as const;
+  });
+}
+
+// False when the key does not exist or belongs to someone else: the caller cannot tell the two apart. Revoking twice keeps
+// the first revocation time.
+export async function revokeKeyForUser(db: Queryable, userId: string, keyId: string): Promise<boolean> {
+  const result = await db.query(
+    'UPDATE api_keys SET revoked_at = COALESCE(revoked_at, now()) WHERE id = $1 AND user_id = $2 RETURNING id',
+    [keyId, userId],
   );
   return (result.rowCount ?? 0) > 0;
 }

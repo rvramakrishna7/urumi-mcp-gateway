@@ -16,6 +16,8 @@ export interface AppDeps {
   mcp?: Router;
   // Login, logout and the current session, mounted at /api/auth.
   auth?: Router;
+  // The API keys of the logged-in user, mounted at /api/me.
+  me?: Router;
 }
 
 export interface GatewayApp {
@@ -24,7 +26,7 @@ export interface GatewayApp {
   beginShutdown: () => void;
 }
 
-export function createApp({ logger, checkDatabase, admin, mcp, auth }: AppDeps): GatewayApp {
+export function createApp({ logger, checkDatabase, admin, mcp, auth, me }: AppDeps): GatewayApp {
   const app = express();
   app.disable('x-powered-by');
   let shuttingDown = false;
@@ -66,6 +68,7 @@ export function createApp({ logger, checkDatabase, admin, mcp, auth }: AppDeps):
 
   if (mcp) app.use('/mcp', mcp);
   if (auth) app.use('/api/auth', auth);
+  if (me) app.use('/api/me', me);
   if (admin) app.use('/api/admin', createAdminRouter(admin));
 
   app.use((_req, res) => {

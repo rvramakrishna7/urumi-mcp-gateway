@@ -18,7 +18,7 @@ spec:
     - host: {{ required "ingress.host is required" .Values.ingress.host | quote }}
       http:
         paths:
-          {{- range list "/mcp" "/healthz" "/api/admin" "/api/auth" }}
+          {{- range list "/mcp" "/healthz" "/api/admin" "/api/auth" "/api/me" }}
           - path: {{ . }}
             pathType: Prefix
             backend:
