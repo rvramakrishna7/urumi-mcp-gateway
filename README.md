@@ -176,8 +176,8 @@ The gateway keeps the list of upstream MCP servers, offers one public MCP endpoi
 ### 1. Build the image and install the chart
 
 ```bash
-docker build -t gateway:0.5.0 services/gateway
-k3d image import gateway:0.5.0 -c urumi
+docker build -t gateway:0.6.2 services/gateway
+k3d image import gateway:0.6.2 -c urumi
 
 helm upgrade --install gateway charts/gateway \
   --namespace gateway --create-namespace \
@@ -187,22 +187,40 @@ helm test gateway -n gateway
 kubectl logs -n gateway pod/gateway-checks
 ```
 
-The release has PostgreSQL (a StatefulSet with a persistent volume) and the gateway Deployment. A `migrate` initContainer creates the schema before the server starts. The test pod prints PASS lines (names and counts only): the database, the migrations, the tables, the seeded server `woo` with an encrypted credential, and the public routes. The Ingress routes only `/mcp`, `/healthz` and `/api/admin`: `curl -i http://gateway.urumi.test/readyz` answers 404 on purpose.
+The release has PostgreSQL (a StatefulSet with a persistent volume) and the gateway Deployment. A `migrate` initContainer creates the schema before the server starts. The test pod prints PASS lines (names and counts only): the database, the migrations, the tables, the seeded server `woo` with an encrypted credential, and the public routes. The Ingress routes only `/mcp`, `/healthz`, `/api/admin`, `/api/auth` and `/api/me`: `curl -i http://gateway.urumi.test/readyz` answers 404 on purpose. The values file `values-local.yaml` sets `bootstrap.adminEmail`, so the install also makes the Secret `gateway-bootstrap` (one random invite token) and the gateway creates that admin at start, without a password.
 
-### 2. Create a user and a key
+### 2. Set the password of the first admin, then create users and keys
 
-There is no login yet (the dashboard comes later), so users and keys are made with the command-line tool inside the gateway pod. The new key is the only thing on stdout; redirect it to a file so that it is not printed, and keep that file private:
+The first admin is made by the install (`bootstrap.adminEmail`, `admin@urumi.test` locally). It has no password: you choose it with the invite token that the chart keeps in the Secret `gateway-bootstrap`. The password is never generated, stored in plain text or logged. This block works in Git Bash, Linux and macOS (it builds the JSON with `printf` and `sed`, so it needs no `node` and no `jq`; in Git Bash `node` is an alias that refuses to run in a pipe). The password is typed without echo and goes to curl through a pipe, never into the command line:
 
 ```bash
-kubectl exec -n gateway deploy/gateway -c gateway -- node dist/cli.js user create --email admin@urumi.test --role admin
-kubectl exec -n gateway deploy/gateway -c gateway -- node dist/cli.js user create --email member@urumi.test --role member
-
 umask 077
-kubectl exec -n gateway deploy/gateway -c gateway -- node dist/cli.js key create --email member@urumi.test --name laptop > member.key
-kubectl exec -n gateway deploy/gateway -c gateway -- node dist/cli.js key create --email admin@urumi.test --name admin-laptop > admin.key
+kubectl get secret gateway-bootstrap -n gateway -o jsonpath='{.data.inviteToken}' | base64 --decode > bootstrap.token
+
+printf 'Choose a password (12 to 128 characters, not shown): '
+IFS= read -rs PW; printf '\n'
+printf '{"token":"%s","password":"%s"}' "$(cat bootstrap.token)" "$(printf '%s' "$PW" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g')" |
+  curl -s -w '\nHTTP %{http_code}\n' -X POST http://gateway.urumi.test/api/auth/accept-invite \
+    -H 'Origin: http://gateway.urumi.test' -H 'Content-Type: application/json' --data-binary @-
+unset PW; rm -f bootstrap.token
 ```
 
-The key starts with `mcpgw_`. The gateway stores only its SHA-256 hash, so it cannot be shown again; make a new one if it is lost. Other commands: `user list`, `key list --email <email>` and `key revoke --id <key id>` (a revoked key gets 401 on the very next request). `--help` prints the usage. Do not commit key files.
+`HTTP 200` means the password is set and the admin is signed in; the token cannot be used again. Any other answer is 400 (the token is wrong, used or expired, or the password is too weak) or 403 (the `Origin` header). If the 7 day token expired, restart the gateway (`kubectl rollout restart deployment/gateway -n gateway`): the start arms the token again while the admin has no password.
+
+**Members.** An admin makes a member through the admin API (section 5) and gives them the one-time invite link, or the CLI does it from inside the pod. The invite is valid for 72 hours and can be used once; the member sets their own password with it. There is no route to change one's own password: an admin issues a new invite to a member (the reset), and the password of an **admin** is reset with the CLI only (`user invite`), so one admin cannot take over the account of another.
+
+```bash
+kubectl exec -n gateway deploy/gateway -c gateway -- node dist/cli.js user invite --email admin@urumi.test > invite.token   # prints the token once
+```
+
+**API keys.** A signed-in user makes and revokes their own keys through `/api/me/keys` (session only). The command-line tool can also make a key for a user who is active; redirect stdout to a file so the key is not printed, and keep that file private:
+
+```bash
+umask 077
+kubectl exec -n gateway deploy/gateway -c gateway -- node dist/cli.js key create --email member@example.com --name laptop > member.key
+```
+
+The key starts with `mcpgw_`. The gateway stores only its SHA-256 hash, so it cannot be shown again; make a new one if it is lost. Other commands: `user list`, `user create --email <email> --role admin|member` (active at once, no password; for a script or a test), `key list --email <email>` and `key revoke --id <key id>` (a revoked key gets 401 on the very next request). `--help` prints the usage. Do not commit key or token files.
 
 ### 3. Connect an MCP client
 
@@ -246,7 +264,35 @@ curl -s -X DELETE $API/<id> -H "$ADMIN"                    # remove (204)
 
 `<id>` is the `id` in the list. A slug is lowercase letters, digits and `-`, at most 20 characters, and starts with a letter. A create or an update refreshes the tool list and the status at once, without waiting for the 15 second poll, so the next `tools/list` already shows the change. A server that cannot be reached is `unreachable` with a short reason (`refused`, `timeout`, `http_401`, `credential_unreadable`) and contributes no tools; the other servers are not affected. The upstream credential stays inside the gateway: it is encrypted in the database and is never sent to a client.
 
-### 5. Read the audit log
+### 5. Manage users and their keys (admin)
+
+These routes are under `/api/admin/users`. They need an admin: an API key (`Authorization: Bearer ...`) or the dashboard session (cookie plus an `Origin` header equal to the gateway origin for POST, PATCH and DELETE). A member gets 403.
+
+| Route | What it does |
+|---|---|
+| `GET /api/admin/users` | List: id, email, role, status, createdAt, lastLoginAt, disabledAt. No hash or secret is returned. |
+| `POST /api/admin/users` `{"email": ...}` | Make a **member** (a body with a `role` is 400) with status `invited`. The answer holds a one-time `invite` (`token`, `link`, `expiresAt`, 72 hours) that is shown once. |
+| `POST /api/admin/users/:id/invite` | A new invite for a member (the password reset). **409 for an admin**: the password of an admin is reset with the CLI `user invite` only. 409 for a disabled user. |
+| `PATCH /api/admin/users/:id` `{"status": "disabled"\|"active"}` | Disable or enable. You cannot disable yourself (409) and the last active admin cannot be disabled (409). |
+| `GET /api/admin/users/:id/keys` | The keys of that user (prefix, name, dates, status; never the key). |
+| `DELETE /api/admin/users/:id/keys/:keyId` | Revoke a key. 404 if the key does not belong to that user; the next `/mcp` request with it is 401. |
+
+Disabling a user deletes their sessions and cancels a pending invite, and their API keys stop working at once because the user is not active. The keys are **not revoked**: if the user is enabled again, the same keys work again, so revoke a key explicitly if it must never come back. Enabling gives back `active` only when the user has a password; a user who never accepted an invite goes back to `invited` and needs a new invite.
+
+```bash
+ADMIN="Authorization: Bearer $(cat admin.key)"
+API=http://gateway.urumi.test/api/admin/users
+
+curl -s $API -H "$ADMIN"                                                       # list
+curl -s -X POST $API -H "$ADMIN" -H 'content-type: application/json' -d '{"email":"new.member@example.com"}'   # invite link, once
+curl -s -X PATCH $API/<id> -H "$ADMIN" -H 'content-type: application/json' -d '{"status":"disabled"}'
+curl -s $API/<id>/keys -H "$ADMIN"
+curl -s -X DELETE $API/<id>/keys/<keyId> -H "$ADMIN" -w '%{http_code}\n'      # 204
+```
+
+The admin actions (invite, disable, revoke) are written to the gateway log (ids only, never a token), not to the audit table, which holds tool calls.
+
+### 6. Read the audit log
 
 Every tool call has a row, written before the call and finished after it, whether it came from an external client or (later) the chat agent. There is no audit page yet; read the table:
 
