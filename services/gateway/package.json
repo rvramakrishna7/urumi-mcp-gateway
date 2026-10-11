@@ -1,6 +1,6 @@
 {
   "name": "gateway",
-  "version": "0.6.3",
+  "version": "0.7.0",
   "description": "Team MCP gateway backend: upstream registry, tool aggregation and routing, API keys and audit",
   "private": true,
   "type": "module",

@@ -11,6 +11,7 @@ import { createMcpRouter } from './mcp/router.ts';
 import { sessionAuthConfig } from './auth/session.ts';
 import { createAuthRouter } from './routes/auth.ts';
 import { createMeKeysRouter } from './routes/me-keys.ts';
+import { createAuditRouter } from './routes/audit.ts';
 import { applyBootstrap, BootstrapError, readBootstrapToken } from './identity/invites.ts';
 import { createPoller } from './upstream/poller.ts';
 
@@ -69,6 +70,7 @@ const { app, beginShutdown } = createApp({
   mcp: mcp.router,
   auth: createAuthRouter({ db: pool, logger, sessions }),
   me: createMeKeysRouter({ db: pool, logger, sessions }),
+  audit: createAuditRouter({ db: pool, logger, sessions }),
 });
 const server = app.listen(config.port, () => {
   logger.info('listening', { port: config.port });

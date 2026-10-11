@@ -18,6 +18,8 @@ export interface AppDeps {
   auth?: Router;
   // The API keys of the logged-in user, mounted at /api/me.
   me?: Router;
+  // The audit log for the dashboard, mounted at /api/audit.
+  audit?: Router;
 }
 
 export interface GatewayApp {
@@ -26,7 +28,7 @@ export interface GatewayApp {
   beginShutdown: () => void;
 }
 
-export function createApp({ logger, checkDatabase, admin, mcp, auth, me }: AppDeps): GatewayApp {
+export function createApp({ logger, checkDatabase, admin, mcp, auth, me, audit }: AppDeps): GatewayApp {
   const app = express();
   app.disable('x-powered-by');
   let shuttingDown = false;
@@ -37,6 +39,8 @@ export function createApp({ logger, checkDatabase, admin, mcp, auth, me }: AppDe
     const start = process.hrtime.bigint();
     const { method, path } = req;
     res.setHeader('X-Request-Id', requestId);
+    // Every answer is data, never a page: a browser must not guess a content type for it.
+    res.setHeader('X-Content-Type-Options', 'nosniff');
     res.on('finish', () => {
       const durationMs = Math.round(Number(process.hrtime.bigint() - start) / 1e5) / 10;
       logger.info('request', { requestId, method, path, status: res.statusCode, durationMs });
@@ -69,6 +73,7 @@ export function createApp({ logger, checkDatabase, admin, mcp, auth, me }: AppDe
   if (mcp) app.use('/mcp', mcp);
   if (auth) app.use('/api/auth', auth);
   if (me) app.use('/api/me', me);
+  if (audit) app.use('/api/audit', audit);
   if (admin) app.use('/api/admin', createAdminRouter(admin));
 
   app.use((_req, res) => {
