@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { Database } from '../db/queryable.ts';
+import { CryptoError } from '../crypto/credentials.ts';
 import type { Keyring } from '../crypto/credentials.ts';
 import type { Logger } from '../logger.ts';
 import { finishAudit, startAudit } from '../audit/repository.ts';
@@ -174,6 +175,13 @@ export function createGateway({ db, keyring, logger, limits = DEFAULT_LIMITS }: 
       await finish(auditId, result.isError ? 'error' : 'ok', result.isError ? 'tool_error' : null, startedAt);
       return result;
     } catch (error) {
+      if (error instanceof CryptoError) {
+        // The master key does not match the stored credential. The server cannot be called until it is set again.
+        logger.warn('stored credential is unreadable', { server: route.slug, reason: 'credential_unreadable' });
+        await markUnreachable(db, route.serverId, 'credential_unreadable').catch(() => logger.warn('status update failed', { server: route.slug }));
+        await finish(auditId, 'unreachable', 'credential_unreadable', startedAt);
+        return failure(`Server "${route.slug}" is unreachable.`);
+      }
       if (!(error instanceof UpstreamError)) {
         logger.error('call failed inside the gateway', { server: route.slug, errorName: error instanceof Error ? error.name : 'unknown' });
         await finish(auditId, 'error', 'gateway_error', startedAt);

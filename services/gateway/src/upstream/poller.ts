@@ -1,4 +1,5 @@
 import type { Database } from '../db/queryable.ts';
+import { CryptoError } from '../crypto/credentials.ts';
 import type { Keyring } from '../crypto/credentials.ts';
 import type { Logger } from '../logger.ts';
 import { listServers, readCredential } from '../registry/repository.ts';
@@ -61,8 +62,11 @@ export function createPoller({ db, keyring, logger, intervalMs = 15_000, jitterM
       return { slug: server.slug, status: 'connected', reason: review.note, tools: review.accepted.length, skipped: review.skipped.length };
     } catch (error) {
       // An UpstreamError carries two fixed words. Anything else (the database, the decryption) is reduced to its class.
-      const reason = error instanceof UpstreamError ? reasonOf(error) : 'internal_error';
-      if (!(error instanceof UpstreamError)) logger.error('probe failed', { server: server.slug, errorName: error instanceof Error ? error.name : 'unknown' });
+      // A credential that cannot be decrypted (the master key does not match) is its own reason, so an admin can see why.
+      const unreadable = error instanceof CryptoError;
+      const reason = error instanceof UpstreamError ? reasonOf(error) : unreadable ? 'credential_unreadable' : 'internal_error';
+      if (unreadable) logger.warn('stored credential is unreadable', { server: server.slug, reason });
+      else if (!(error instanceof UpstreamError)) logger.error('probe failed', { server: server.slug, errorName: error instanceof Error ? error.name : 'unknown' });
       try {
         await markUnreachable(db, server.id, reason);
       } catch {

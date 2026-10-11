@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { z } from 'zod';
 import type { Database, Queryable } from '../db/queryable.ts';
 import { withTransaction } from '../db/queryable.ts';
-import { encryptCredential } from '../crypto/credentials.ts';
+import { CryptoError, encryptCredential } from '../crypto/credentials.ts';
 import type { Keyring } from '../crypto/credentials.ts';
 import type { Logger } from '../logger.ts';
 import { insertServer, readCredential } from './repository.ts';
@@ -103,8 +103,20 @@ export async function applySeed(db: Database, keyring: Keyring, seed: SeedFile, 
 
       // Re-encrypting would change the nonce and the row on every start, so the credential is written only when it
       // differs from what is stored.
-      const stored = await readCredential(client, keyring, existing.id);
-      const sameCredential = credential
+      // A stored credential that cannot be decrypted (the master key was changed or lost) counts as different: the seed
+      // file is the source of truth for a seed managed row, so it is encrypted again with the current key.
+      let stored: Awaited<ReturnType<typeof readCredential>> = null;
+      let readable = true;
+      try {
+        stored = await readCredential(client, keyring, existing.id);
+      } catch (error) {
+        if (!(error instanceof CryptoError)) throw error;
+        readable = false;
+        logger.warn('stored credential is unreadable, it is replaced from the seed', { server: entry.slug, reason: 'credential_unreadable' });
+      }
+      const sameCredential = !readable
+        ? false
+        : credential
         ? stored !== null && stored.kind === credential.kind && stored.value === credential.value && (stored.header ?? null) === (credential.kind === 'header' ? credential.header : null)
         : stored === null;
       if (existing.url === entry.url && sameCredential) {

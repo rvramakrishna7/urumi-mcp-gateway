@@ -82,6 +82,29 @@ describe('install seed (needs PostgreSQL)', { skip: skipWithoutDb }, () => {
     assert.equal((await state()).seed_managed, true);
   });
 
+  test('a stored credential that the master key cannot decrypt is replaced from the seed, and the start does not fail', async () => {
+    writeFileSync(join(dir, 'other-master'), randomBytes(32).toString('base64'));
+    const otherKeyring = loadKeyring(join(dir, 'other-master'), 'k9');
+    await applySeed(pool, otherKeyring, seedWith('seed-token-aaaaaaaa'), logger);
+    const id = (await state()).id;
+    await assert.rejects(() => readCredential(pool, keyring, id), 'the current key cannot read the row');
+    await patchServer(pool, keyring, id, { enabled: false });
+
+    const start = logLines.length;
+    const actions = await applySeed(pool, keyring, seedWith('seed-token-aaaaaaaa'), logger);
+    assert.deepEqual(actions, { woo: 'synced' });
+    assert.equal((await readCredential(pool, keyring, id))?.value, 'seed-token-aaaaaaaa');
+    assert.equal((await state()).enabled, false, 'the repair does not touch enabled');
+
+    // The warning names the server and the reason and nothing else.
+    const warning = logLines.slice(start).map((line) => JSON.parse(line)).find((entry) => entry.level === 'warn');
+    assert.ok(warning, 'a warning was logged');
+    const { time: _time, level: _level, message: _message, ...fields } = warning;
+    assert.deepEqual(fields, { server: 'woo', reason: 'credential_unreadable' });
+    const text = logLines.slice(start).join('\n');
+    for (const needle of ['seed-token-aaaaaaaa', 'k9', 'ciphertext', 'nonce']) assert.ok(!text.includes(needle), `the log contains "${needle}"`);
+  });
+
   test('the seed never writes enabled: a server that an admin disabled stays disabled across restarts', async () => {
     await applySeed(pool, keyring, seedWith('seed-token-aaaaaaaa'), logger);
     const id = (await state()).id;
