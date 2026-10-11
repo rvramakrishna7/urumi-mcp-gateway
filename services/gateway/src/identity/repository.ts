@@ -173,6 +173,65 @@ export async function markLogin(db: Queryable, userId: string): Promise<void> {
   await db.query('UPDATE users SET last_login_at = now() WHERE id = $1', [userId]);
 }
 
+export interface AdminUserView extends UserView {
+  lastLoginAt: Date | null;
+  disabledAt: Date | null;
+}
+
+// The users page of an admin. The password hash, the invite hash and every key hash are never selected.
+export async function listUsersForAdmin(db: Queryable): Promise<AdminUserView[]> {
+  const result = await db.query(
+    'SELECT id, email, role, status, created_at, last_login_at, disabled_at FROM users ORDER BY created_at, email',
+  );
+  return result.rows.map(toAdminUser);
+}
+
+export async function findUserForAdmin(db: Queryable, id: string): Promise<AdminUserView | null> {
+  const result = await db.query(
+    'SELECT id, email, role, status, created_at, last_login_at, disabled_at FROM users WHERE id = $1',
+    [id],
+  );
+  return result.rowCount === 0 ? null : toAdminUser(result.rows[0]);
+}
+
+export type SetStatusResult = { ok: true; user: AdminUserView } | { ok: false; reason: 'not_found' | 'last_admin' };
+
+// Disabling and enabling, with the guard for the last admin inside the transaction. The active admins are locked first (in
+// id order), so two admins who disable each other at the same time cannot both see "the other one is left": the second
+// transaction waits, then counts again. A disabled user loses the sessions at once and the pending invite (an old invite
+// must not come back to life on enable). The API keys are not revoked: they stop working because the user is not active
+// (findActiveKey), and they work again if the user is enabled. Enabling gives back "active" only when a password exists.
+export async function setUserStatus(db: Database, targetId: string, status: 'active' | 'disabled'): Promise<SetStatusResult> {
+  return withTransaction(db, async (client) => {
+    const admins = await client.query("SELECT id FROM users WHERE role = 'admin' AND status = 'active' ORDER BY id FOR UPDATE");
+    const target = await client.query('SELECT id, role, status, password_hash FROM users WHERE id = $1 FOR UPDATE', [targetId]);
+    if (target.rowCount === 0) return { ok: false, reason: 'not_found' } as const;
+    const row = target.rows[0];
+    if (status === 'disabled' && row.status !== 'disabled') {
+      if (row.role === 'admin' && row.status === 'active' && (admins.rowCount ?? 0) <= 1) return { ok: false, reason: 'last_admin' } as const;
+      await client.query(
+        "UPDATE users SET status = 'disabled', disabled_at = now(), invite_token_hash = NULL, invite_expires_at = NULL WHERE id = $1",
+        [targetId],
+      );
+      await client.query('DELETE FROM sessions WHERE user_id = $1', [targetId]);
+    } else if (status === 'active' && row.status === 'disabled') {
+      await client.query(
+        "UPDATE users SET status = CASE WHEN password_hash IS NOT NULL THEN 'active' ELSE 'invited' END, disabled_at = NULL WHERE id = $1",
+        [targetId],
+      );
+    }
+    const done = await client.query(
+      'SELECT id, email, role, status, created_at, last_login_at, disabled_at FROM users WHERE id = $1',
+      [targetId],
+    );
+    return { ok: true, user: toAdminUser(done.rows[0]) } as const;
+  });
+}
+
+function toAdminUser(row: Record<string, unknown>): AdminUserView {
+  return { ...toUser(row), lastLoginAt: row.last_login_at as Date | null, disabledAt: row.disabled_at as Date | null };
+}
+
 function toUser(row: Record<string, unknown>): UserView {
   return { id: row.id as string, email: row.email as string, role: row.role as Role, status: row.status as string, createdAt: row.created_at as Date };
 }

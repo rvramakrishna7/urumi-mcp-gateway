@@ -36,6 +36,47 @@ export async function issueInvite(db: Queryable, userId: string, ttlSeconds: num
   return result.rowCount === 0 ? null : token;
 }
 
+export interface IssuedInvite {
+  token: string;
+  expiresAt: Date;
+}
+
+// The same as issueInvite, and it also returns the expiry that the database wrote (for the admin API).
+export async function issueInviteWithExpiry(db: Queryable, userId: string, ttlSeconds: number = INVITE_TTL_SECONDS): Promise<IssuedInvite | null> {
+  const token = generateInviteToken();
+  const result = await db.query(
+    `UPDATE users SET invite_token_hash = $2, invite_expires_at = now() + make_interval(secs => $3::double precision)
+     WHERE id = $1 AND status <> 'disabled' RETURNING invite_expires_at`,
+    [userId, hashInviteToken(token), ttlSeconds],
+  );
+  return result.rowCount === 0 ? null : { token, expiresAt: result.rows[0].invite_expires_at as Date };
+}
+
+export type CreateMemberResult =
+  | { ok: true; user: { id: string; email: string; role: Role; status: string }; invite: IssuedInvite }
+  | { ok: false; reason: 'invalid_email' | 'exists' };
+
+// The admin API makes members only: the role is fixed here and never comes from a request (decision 36). The user is
+// "invited" until the token is accepted, and the row names the admin who made it.
+export async function createInvitedMember(db: Queryable, email: string, createdBy: string): Promise<CreateMemberResult> {
+  const normalized = email.trim().toLowerCase();
+  if (!/^[^\s@]+@[^\s@]+$/.test(normalized) || normalized.length > 254) return { ok: false, reason: 'invalid_email' };
+  const token = generateInviteToken();
+  try {
+    const result = await db.query(
+      `INSERT INTO users (email, role, status, created_by, invite_token_hash, invite_expires_at)
+       VALUES ($1, 'member', 'invited', $2, $3, now() + make_interval(secs => $4::double precision))
+       RETURNING id, email, role, status, invite_expires_at`,
+      [normalized, createdBy, hashInviteToken(token), INVITE_TTL_SECONDS],
+    );
+    const row = result.rows[0];
+    return { ok: true, user: { id: row.id, email: row.email, role: row.role as Role, status: row.status }, invite: { token, expiresAt: row.invite_expires_at as Date } };
+  } catch (error) {
+    if ((error as { code?: string }).code === '23505') return { ok: false, reason: 'exists' };
+    throw error;
+  }
+}
+
 export async function issueInviteByEmail(db: Queryable, email: string): Promise<string> {
   const user = await db.query('SELECT id FROM users WHERE email = $1', [email.trim().toLowerCase()]);
   if (user.rowCount === 0) throw new IdentityError('no user with this email');

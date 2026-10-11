@@ -6,6 +6,7 @@ import type { Logger } from '../logger.ts';
 import { authenticate, authenticateKeyOrSession, identityOf, requireAdmin } from '../auth/middleware.ts';
 import type { SessionAuthConfig } from '../auth/session.ts';
 import { deleteServer, getServer, insertServer, listServers, patchServer, RegistryError } from '../registry/repository.ts';
+import { createAdminUsersRouter } from './admin-users.ts';
 import { createServerSchema, describeIssues, patchServerSchema } from '../registry/validation.ts';
 
 export interface AdminDeps {
@@ -48,6 +49,9 @@ export function createAdminRouter({ db, keyring, logger, now, sessions, onServer
   };
   const router = express.Router();
   router.use(sessions ? authenticateKeyOrSession({ db, logger, now, sessions }) : authenticate({ db, logger, now }), requireAdmin, express.json({ limit: '16kb' }));
+
+  // The users and their keys need the origin of the dashboard for the invite link, so they exist only with sessions.
+  if (sessions) router.use('/users', createAdminUsersRouter({ db, logger, publicOrigin: sessions.publicOrigin }));
 
   router.get('/servers', async (_req, res) => {
     try {
