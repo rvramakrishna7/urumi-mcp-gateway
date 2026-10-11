@@ -77,6 +77,9 @@ spec:
               value: {{ .Values.gateway.masterKeyId | quote }}
             - name: SEED_FILE
               value: /config/seed/seed.json
+            # The Host names that /mcp answers to (DNS rebinding protection). The health routes ignore it.
+            - name: ALLOWED_HOSTS
+              value: {{ required "ingress.host is required" .Values.ingress.host | quote }}
             {{- include "gateway.dbEnv" . | nindent 12 }}
           # Liveness never calls the database or an upstream. Readiness calls the database (the gateway cannot
           # serve without it) and never an upstream: a slow or dead upstream must not take the gateway out of the

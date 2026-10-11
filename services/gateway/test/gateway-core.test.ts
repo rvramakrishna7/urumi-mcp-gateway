@@ -1,13 +1,10 @@
 import { after, before, describe, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
-import type { Server } from 'node:http';
-import type { AddressInfo } from 'node:net';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type pg from 'pg';
-import { createApp } from '../src/app.ts';
 import { createGateway } from '../src/core/gateway.ts';
 import type { Caller, Gateway } from '../src/core/gateway.ts';
 import { loadKeyring } from '../src/crypto/credentials.ts';
@@ -342,42 +339,6 @@ describe('gateway core: aggregation, routing, isolation and audit, against fake 
     for (const row of rows) outcomes[row.outcome] = (outcomes[row.outcome] ?? 0) + 1;
     assert.ok(outcomes.ok >= 5 && outcomes.timeout === 1 && outcomes.unreachable === 1 && outcomes.unknown_tool >= 7, JSON.stringify(outcomes));
     assert.ok(rows.some((row) => row.user_email === 'member@example.com'));
-  });
-
-  test('the debug routes need an admin key; a call through them is audited under that admin', async () => {
-    const logger = createLogger((line) => logLines.push(line));
-    const { app } = createApp({ logger, checkDatabase: async () => {}, debug: { db: pool, gateway, poller, logger } });
-    const server = await new Promise<Server>((resolve) => {
-      const instance = app.listen(0, '127.0.0.1', () => resolve(instance));
-    });
-    const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}/api/admin/debug`;
-    try {
-      const send = async (method: string, path: string, key: string | null, body?: unknown) => {
-        const headers: Record<string, string> = { 'content-type': 'application/json' };
-        if (key) headers.authorization = `Bearer ${key}`;
-        const response = await fetch(base + path, { method, headers, body: body === undefined ? undefined : JSON.stringify(body) });
-        return { status: response.status, json: (await response.json().catch(() => null)) as any };
-      };
-      assert.equal((await send('GET', '/tools', null)).status, 401);
-      assert.equal((await send('GET', '/tools', memberKey)).status, 403);
-      assert.equal((await send('POST', '/call', memberKey, { name: 'fast__echo' })).status, 403);
-      assert.equal((await send('POST', '/refresh', memberKey)).status, 403);
-      const listed = await send('GET', '/tools', adminKey);
-      assert.equal(listed.status, 200);
-      assert.ok(listed.json.tools.some((entry: { name: string }) => entry.name === 'fast__echo'));
-      assert.equal((await send('POST', '/call', adminKey, { name: 5 })).status, 400);
-      made.push('fast__ping');
-      const called = await send('POST', '/call', adminKey, { name: 'fast__ping', arguments: { text: 'x' } });
-      assert.equal(called.status, 200);
-      assert.equal(called.json.content[0].text, 'ping done {"text":"x"}');
-      const row = (await pool.query(`SELECT user_email FROM audit_log WHERE requested_name = 'fast__ping' ORDER BY id DESC LIMIT 1`)).rows[0];
-      assert.equal(row.user_email, 'admin@example.com');
-    } finally {
-      await new Promise<void>((resolve) => {
-        server.close(() => resolve());
-        server.closeAllConnections();
-      });
-    }
   });
 
   test('when the phase 1 audit insert fails the upstream receives no request and the caller gets a clear error', async () => {

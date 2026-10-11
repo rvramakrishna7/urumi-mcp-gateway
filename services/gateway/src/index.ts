@@ -7,6 +7,7 @@ import { checkDatabase, createPool } from './db/pool.ts';
 import { createLogger } from './logger.ts';
 import { createGateway } from './core/gateway.ts';
 import { applySeed, loadSeedFile, SeedError } from './registry/seed.ts';
+import { createMcpRouter } from './mcp/router.ts';
 import { createPoller } from './upstream/poller.ts';
 
 const logger = createLogger();
@@ -42,11 +43,13 @@ try {
 const gateway = createGateway({ db: pool, keyring, logger });
 const poller = createPoller({ db: pool, keyring, logger });
 
+const mcp = createMcpRouter({ db: pool, gateway, logger, allowedHosts: security.allowedHosts });
+
 const { app, beginShutdown } = createApp({
   logger,
   checkDatabase: () => checkDatabase(pool),
   admin: { db: pool, keyring, logger },
-  debug: { db: pool, gateway, poller, logger },
+  mcp: mcp.router,
 });
 const server = app.listen(config.port, () => {
   logger.info('listening', { port: config.port });
@@ -58,7 +61,7 @@ const shutdown = (signal: string) => {
   beginShutdown();
   server.close(() => {
     // The poller stops first, so that no probe writes to a closed pool.
-    poller.stop().finally(() => pool.end().finally(() => process.exit(0)));
+    mcp.close().finally(() => poller.stop().finally(() => pool.end().finally(() => process.exit(0))));
   });
   server.closeIdleConnections();
   setTimeout(() => process.exit(1), 10_000).unref();

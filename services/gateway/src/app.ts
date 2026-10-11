@@ -4,8 +4,7 @@ import type { ErrorRequestHandler } from 'express';
 import type { Logger } from './logger.ts';
 import { createAdminRouter } from './routes/admin.ts';
 import type { AdminDeps } from './routes/admin.ts';
-import { createDebugRouter } from './routes/debug.ts';
-import type { DebugDeps } from './routes/debug.ts';
+import type { Router } from 'express';
 
 export interface AppDeps {
   logger: Logger;
@@ -13,8 +12,8 @@ export interface AppDeps {
   checkDatabase: () => Promise<void>;
   // The registry admin API. Left out in tests of the health routes only.
   admin?: AdminDeps;
-  // Temporary admin-only routes to exercise listTools and callTool (Step 8d). Removed in 8e.
-  debug?: DebugDeps;
+  // The public MCP endpoint, mounted at /mcp with its own Host check, authentication and body limit.
+  mcp?: Router;
 }
 
 export interface GatewayApp {
@@ -23,7 +22,7 @@ export interface GatewayApp {
   beginShutdown: () => void;
 }
 
-export function createApp({ logger, checkDatabase, admin, debug }: AppDeps): GatewayApp {
+export function createApp({ logger, checkDatabase, admin, mcp }: AppDeps): GatewayApp {
   const app = express();
   app.disable('x-powered-by');
   let shuttingDown = false;
@@ -63,8 +62,7 @@ export function createApp({ logger, checkDatabase, admin, debug }: AppDeps): Gat
     }
   });
 
-  // The debug router is mounted first: the admin router applies its authentication to every path under /api/admin.
-  if (debug) app.use('/api/admin/debug', createDebugRouter(debug));
+  if (mcp) app.use('/mcp', mcp);
   if (admin) app.use('/api/admin', createAdminRouter(admin));
 
   app.use((_req, res) => {

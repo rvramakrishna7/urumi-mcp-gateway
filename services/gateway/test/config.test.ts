@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { ConfigError, loadConfig, loadDbConfig } from '../src/config.ts';
+import { ConfigError, loadConfig, loadDbConfig, loadSecurityConfig } from '../src/config.ts';
 
 describe('loadConfig and loadDbConfig', () => {
   let dir: string;
@@ -105,6 +105,20 @@ describe('loadConfig and loadDbConfig', () => {
         assert.ok(!error.message.includes(password));
         return true;
       });
+    }
+  });
+});
+
+describe('loadSecurityConfig: ALLOWED_HOSTS', () => {
+  const env = (overrides: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv => ({ MASTER_KEY_FILE: '/secrets/master/key', ALLOWED_HOSTS: 'gateway.urumi.test', ...overrides });
+
+  test('is split on commas and trimmed', () => {
+    assert.deepEqual(loadSecurityConfig(env({ ALLOWED_HOSTS: ' gateway.urumi.test , localhost ,' })).allowedHosts, ['gateway.urumi.test', 'localhost']);
+  });
+
+  test('is required: a missing, empty or blank list stops the start instead of turning the Host check off', () => {
+    for (const value of [undefined, '', ' , ']) {
+      assert.throws(() => loadSecurityConfig(env({ ALLOWED_HOSTS: value })), (error: unknown) => error instanceof ConfigError && error.message.includes('ALLOWED_HOSTS'));
     }
   });
 });

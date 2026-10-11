@@ -1,0 +1,29 @@
+{{- /*
+The only public door of the gateway. Four exact prefixes are routed and nothing else, so a path that the gateway might
+gain later is not exposed by accident. Traefik passes the original Host header on, and /mcp checks it against
+ingress.host (ALLOWED_HOSTS). PostgreSQL has no Ingress.
+*/ -}}
+{{- if .Values.ingress.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: gateway
+  labels:
+    {{- include "gateway.labels" . | nindent 4 }}
+    app.kubernetes.io/component: gateway
+spec:
+  ingressClassName: {{ .Values.ingress.className }}
+  rules:
+    - host: {{ required "ingress.host is required" .Values.ingress.host | quote }}
+      http:
+        paths:
+          {{- range list "/mcp" "/healthz" "/readyz" "/api/admin" }}
+          - path: {{ . }}
+            pathType: Prefix
+            backend:
+              service:
+                name: gateway
+                port:
+                  name: http
+          {{- end }}
+{{- end }}

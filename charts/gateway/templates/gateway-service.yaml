@@ -1,5 +1,5 @@
 {{- /*
-ClusterIP only. There is no Ingress in this chart yet: the public MCP endpoint and the dashboard come in later steps.
+ClusterIP only. The public path is the Ingress (gateway-ingress.yaml); the dashboard comes in a later step.
 */ -}}
 apiVersion: v1
 kind: Service

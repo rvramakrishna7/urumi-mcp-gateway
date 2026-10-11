@@ -6,7 +6,7 @@ gateway:
   image:
     repository: gateway
     # Pinned to an exact version. Never use latest.
-    tag: "0.3.0"
+    tag: "0.4.0"
     pullPolicy: IfNotPresent
   # Names of Secrets (of type kubernetes.io/dockerconfigjson) that hold registry credentials. Empty for the
   # local cluster, where the image is imported with "k3d image import".
@@ -31,6 +31,13 @@ gateway:
     limits:
       cpu: 250m
       memory: 128Mi
+
+# The public endpoint (decision 32). The host has no default: it is set in values-local.yaml and values-prod.yaml.
+# Only /mcp, /healthz, /readyz and /api/admin are routed. The same host is the Host header that /mcp accepts.
+ingress:
+  enabled: true
+  className: traefik
+  host: ""
 
 # Servers that the install registers once (decision 31). The values hold no secret: a credential names the Secret that
 # holds the value, and the chart copies it with lookup.

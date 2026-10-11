@@ -2,7 +2,12 @@ The gateway backend is installed in namespace "{{ .Release.Namespace }}". It is 
 
   http://gateway.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.gateway.port }}
 
-There is no public endpoint yet: the MCP endpoint, the dashboard and the Ingress come in later steps.
+{{- if .Values.ingress.enabled }}
+The public MCP endpoint is http://{{ .Values.ingress.host }}/mcp (Bearer API key). The Ingress routes only /mcp,
+/healthz, /readyz and /api/admin. The dashboard comes in a later step.
+{{- else }}
+The Ingress is disabled: there is no public endpoint.
+{{- end }}
 
 PostgreSQL runs as the StatefulSet "postgres" with a persistent volume. Its password was generated on first install and
 is kept in the Secret "{{ include "gateway.dbSecretName" . }}". It is never printed by this chart. The schema is created and upgraded by
