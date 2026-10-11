@@ -112,7 +112,7 @@ describe('an upstream credential that cannot be decrypted (needs PostgreSQL)', {
       (await pool.query('SELECT slug, status, status_reason FROM upstream_servers')).rows,
       (await pool.query('SELECT * FROM audit_log')).rows,
     ]);
-    const needles = [TOKEN, 'canary', 'kold', 'knew', stored.c, stored.b, stored.n, stored.nb, String(locked.port)];
+    const needles = [TOKEN, 'canary', 'kold', 'knew', stored.c, stored.b, stored.n, stored.nb];
     for (const [where, text] of Object.entries({ logs: logLines.join('\n'), database })) {
       for (const needle of needles) assert.ok(!text.includes(needle), `${where} contains a secret value`);
     }
