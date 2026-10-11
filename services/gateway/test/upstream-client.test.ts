@@ -4,6 +4,7 @@ import { callUpstreamTool, listUpstreamTools, UpstreamError } from '../src/upstr
 import type { UpstreamLimits, UpstreamTarget } from '../src/upstream/client.ts';
 import { startFake } from './helpers/fake-upstream.ts';
 import type { Fake } from './helpers/fake-upstream.ts';
+import { containsPort } from './helpers/port-needle.ts';
 
 const TOKEN = 'canary-bearer-token-71c2a9d4e8f0b365';
 const HEADER_VALUE = 'canary-header-value-4b8e1d7a9c2f6035';
@@ -61,7 +62,7 @@ describe('upstream client: one connection per call, against fake upstreams', () 
     assert.equal(failure.kind, 'unauthorized');
     assert.equal(failure.stage, 'connect');
     for (const text of [failure.message, String(failure.stack), JSON.stringify(failure)]) {
-      assert.ok(!text.includes(upstream.url) && !text.includes(String(upstream.port)), 'no URL or port');
+      assert.ok(!text.includes(upstream.url) && !containsPort(text, upstream.port), 'no URL or port');
       assert.ok(!text.includes('canary'), 'no credential');
     }
   });

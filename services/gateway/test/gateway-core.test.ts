@@ -20,6 +20,7 @@ import { createTestDatabase, skipWithoutDb } from './helpers/db.ts';
 import type { TestDatabase } from './helpers/db.ts';
 import { startFake } from './helpers/fake-upstream.ts';
 import type { Fake, FakeOptions, FakeTool } from './helpers/fake-upstream.ts';
+import { containsPort } from './helpers/port-needle.ts';
 
 const TOKEN = 'canary-gateway-upstream-token-5d1f8a3c7b9e2046';
 const schema = { type: 'object', properties: { text: { type: 'string' } } };
@@ -385,12 +386,21 @@ describe('gateway core: aggregation, routing, isolation and audit, against fake 
       (await gateway.listTools(admin)),
     ]);
     const haystacks = { results: seen.join('\n'), logs: logLines.join('\n'), database };
-    const needles = ['canary', TOKEN, '127.0.0.1', ...Object.values(fakes).map((fake) => String(fake.port)), 'xxxxxxxxxxxxxxxx'];
+    const needles = ['canary', TOKEN, '127.0.0.1', 'xxxxxxxxxxxxxxxx'];
+    const ports = Object.values(fakes).map((fake) => fake.port);
+    // A port is matched with boundaries (test/helpers/port-needle.ts): the digits of a UUID are not a leak. The control
+    // below shows both sides: a port in an address or a JSON field is found, a port inside a UUID is not.
+    const planted = ports[0]!;
+    assert.ok(ports.length >= 5, 'the scan loaded the ports of the fakes');
+    assert.ok(containsPort(`http://127.0.0.1:${planted}/mcp`, planted), 'control: host:port is found');
+    assert.ok(containsPort(`{"port":${planted}}`, planted), 'control: a JSON port is found');
+    assert.ok(!containsPort(`"id":"${planted}000-0000-4000-8000-${planted}0000000"`, planted), 'control: digits inside a UUID are not a port');
     for (const [where, text] of Object.entries(haystacks)) {
       for (const needle of needles) {
         // The status of a server may hold the word "canary"? No: only codes. The list holds descriptions of the fakes.
         assert.ok(!text.includes(needle), `${where} contains "${needle}"`);
       }
+      for (const port of ports) assert.ok(!containsPort(text, port), `${where} contains the port ${port}`);
     }
     assert.ok(seen.length > 15 && logLines.length > 3, 'the scan looked at something');
   });
