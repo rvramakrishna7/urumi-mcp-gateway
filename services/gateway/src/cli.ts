@@ -19,11 +19,26 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
 const say = (text: string) => process.stderr.write(`${text}\n`);
 
+// Null for an unknown option or an option without its value (parseArgs throws a TypeError for those).
+function parseCommandLine() {
+  try {
+    return parseArgs({
+      allowPositionals: true,
+      options: { email: { type: 'string' }, role: { type: 'string' }, name: { type: 'string' }, id: { type: 'string' }, help: { type: 'boolean' } },
+    });
+  } catch {
+    return null;
+  }
+}
+
 async function run(): Promise<void> {
-  const { positionals, values } = parseArgs({
-    allowPositionals: true,
-    options: { email: { type: 'string' }, role: { type: 'string' }, name: { type: 'string' }, id: { type: 'string' } },
-  });
+  const parsed = parseCommandLine();
+  if (!parsed || parsed.values.help) {
+    say(USAGE);
+    process.exitCode = 2;
+    return;
+  }
+  const { positionals, values } = parsed;
   const [group, action] = positionals;
   const client = new pg.Client(clientConfig(loadDbConfig()));
   await client.connect();
