@@ -88,7 +88,7 @@ describe('runMigrations (needs PostgreSQL)', { skip: skipWithoutDb }, () => {
       const files = await loadMigrationFiles();
       const result = await runMigrations(client, files, quiet);
       assert.deepEqual(result, { applied: files.map((file) => file.version), alreadyApplied: [], unknown: [] });
-      assert.deepEqual(await tableNames(client), ['api_keys', 'applied_seeds', 'audit_log', 'schema_migrations', 'upstream_servers', 'upstream_tools', 'users']);
+      assert.deepEqual(await tableNames(client), ['api_keys', 'applied_seeds', 'audit_log', 'login_throttle', 'schema_migrations', 'sessions', 'upstream_servers', 'upstream_tools', 'users']);
       const { rows } = await client.query('SELECT version, checksum FROM schema_migrations');
       assert.deepEqual(rows, files.map((file) => ({ version: file.version, checksum: file.checksum })));
     } finally {
