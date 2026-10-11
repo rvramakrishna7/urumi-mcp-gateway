@@ -109,8 +109,30 @@ describe('loadConfig and loadDbConfig', () => {
   });
 });
 
+describe('loadSecurityConfig: PUBLIC_ORIGIN', () => {
+  const env = (overrides: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv => ({
+    MASTER_KEY_FILE: '/secrets/master/key',
+    ALLOWED_HOSTS: 'gateway.urumi.test',
+    PUBLIC_ORIGIN: 'http://gateway.urumi.test',
+    ...overrides,
+  });
+
+  test('accepts an origin, with or without a trailing slash and with a port', () => {
+    assert.equal(loadSecurityConfig(env()).publicOrigin, 'http://gateway.urumi.test');
+    assert.equal(loadSecurityConfig(env({ PUBLIC_ORIGIN: 'https://gateway.example.com/' })).publicOrigin, 'https://gateway.example.com');
+    assert.equal(loadSecurityConfig(env({ PUBLIC_ORIGIN: 'http://localhost:8080' })).publicOrigin, 'http://localhost:8080');
+  });
+
+  test('refuses a missing value and anything that is not exactly an origin', () => {
+    const values = [undefined, '', 'gateway.urumi.test', 'ftp://gateway.urumi.test', 'http://gateway.urumi.test/app', 'http://gateway.urumi.test?x=1', 'http://gateway.urumi.test#top', 'http://user:pw@gateway.urumi.test', 'http://GATEWAY.urumi.test'];
+    for (const value of values) {
+      assert.throws(() => loadSecurityConfig(env({ PUBLIC_ORIGIN: value })), (error: unknown) => error instanceof ConfigError && error.message.includes('PUBLIC_ORIGIN') && !error.message.includes('pw'), String(value));
+    }
+  });
+});
+
 describe('loadSecurityConfig: ALLOWED_HOSTS', () => {
-  const env = (overrides: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv => ({ MASTER_KEY_FILE: '/secrets/master/key', ALLOWED_HOSTS: 'gateway.urumi.test', ...overrides });
+  const env = (overrides: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv => ({ MASTER_KEY_FILE: '/secrets/master/key', ALLOWED_HOSTS: 'gateway.urumi.test', PUBLIC_ORIGIN: 'http://gateway.urumi.test', ...overrides });
 
   test('is split on commas and trimmed', () => {
     assert.deepEqual(loadSecurityConfig(env({ ALLOWED_HOSTS: ' gateway.urumi.test , localhost ,' })).allowedHosts, ['gateway.urumi.test', 'localhost']);

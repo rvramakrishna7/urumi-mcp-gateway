@@ -3,7 +3,8 @@ import type { Response } from 'express';
 import type { Database } from '../db/queryable.ts';
 import type { Keyring } from '../crypto/credentials.ts';
 import type { Logger } from '../logger.ts';
-import { authenticate, callerOf, requireAdmin } from '../auth/middleware.ts';
+import { authenticate, authenticateKeyOrSession, identityOf, requireAdmin } from '../auth/middleware.ts';
+import type { SessionAuthConfig } from '../auth/session.ts';
 import { deleteServer, getServer, insertServer, listServers, patchServer, RegistryError } from '../registry/repository.ts';
 import { createServerSchema, describeIssues, patchServerSchema } from '../registry/validation.ts';
 
@@ -12,6 +13,8 @@ export interface AdminDeps {
   keyring: Keyring;
   logger: Logger;
   now?: () => number;
+  // When set, a dashboard session is accepted as well as an API key. Left out in tests of the API key only.
+  sessions?: SessionAuthConfig;
   // Called after a server was created or changed (enabled, disabled, edited, new credential). It is not awaited, so a
   // slow or failing refresh cannot change the answer to the admin. It is the poller's refreshNow in production.
   onServerChanged?: () => Promise<unknown> | void;
@@ -29,9 +32,9 @@ function fail(res: Response, error: unknown, logger: Logger): void {
   res.status(500).json({ error: 'internal error' });
 }
 
-// The admin API of the registry. Every route needs an API key (401) and the admin role (403). The body is parsed only
-// after both checks, so an unauthenticated caller cannot make the gateway parse anything.
-export function createAdminRouter({ db, keyring, logger, now, onServerChanged }: AdminDeps): express.Router {
+// The admin API of the registry. Every route needs an API key or a session (401) and the admin role (403). The body is
+// parsed only after both checks, so an unauthenticated caller cannot make the gateway parse anything.
+export function createAdminRouter({ db, keyring, logger, now, sessions, onServerChanged }: AdminDeps): express.Router {
   // Starts the refresh and returns at once. A rejection (or a throw) is logged here: nobody awaits it, and an unhandled
   // rejection would stop the process.
   const refreshInBackground = (): void => {
@@ -44,7 +47,7 @@ export function createAdminRouter({ db, keyring, logger, now, onServerChanged }:
     }
   };
   const router = express.Router();
-  router.use(authenticate({ db, logger, now }), requireAdmin, express.json({ limit: '16kb' }));
+  router.use(sessions ? authenticateKeyOrSession({ db, logger, now, sessions }) : authenticate({ db, logger, now }), requireAdmin, express.json({ limit: '16kb' }));
 
   router.get('/servers', async (_req, res) => {
     try {
@@ -71,8 +74,8 @@ export function createAdminRouter({ db, keyring, logger, now, onServerChanged }:
       return;
     }
     try {
-      const server = await insertServer(db, keyring, parsed.data, { createdBy: callerOf(res).userId, seedManaged: false });
-      logger.info('server registered', { slug: server.slug, by: callerOf(res).email });
+      const server = await insertServer(db, keyring, parsed.data, { createdBy: identityOf(res).userId, seedManaged: false });
+      logger.info('server registered', { slug: server.slug, by: identityOf(res).email });
       res.status(201).json({ server });
       refreshInBackground();
     } catch (error) {
@@ -93,7 +96,7 @@ export function createAdminRouter({ db, keyring, logger, now, onServerChanged }:
     try {
       const server = await patchServer(db, keyring, req.params.id, parsed.data);
       // Field names only, never values.
-      logger.info('server updated', { slug: server.slug, by: callerOf(res).email, fields: Object.keys(parsed.data).join(',') });
+      logger.info('server updated', { slug: server.slug, by: identityOf(res).email, fields: Object.keys(parsed.data).join(',') });
       res.json({ server });
       refreshInBackground();
     } catch (error) {
@@ -105,7 +108,7 @@ export function createAdminRouter({ db, keyring, logger, now, onServerChanged }:
     try {
       const removed = UUID.test(req.params.id) ? await deleteServer(db, req.params.id) : false;
       if (!removed) throw new RegistryError('not_found', 'server not found');
-      logger.info('server removed', { id: req.params.id, by: callerOf(res).email });
+      logger.info('server removed', { id: req.params.id, by: identityOf(res).email });
       res.status(204).end();
     } catch (error) {
       fail(res, error, logger);

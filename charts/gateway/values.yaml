@@ -37,6 +37,8 @@ gateway:
 ingress:
   enabled: true
   className: traefik
+  # http or https. It is the scheme of PUBLIC_ORIGIN: https makes the session cookie Secure. Set https only together with TLS.
+  scheme: http
   host: ""
 
 # Servers that the install registers once (decision 31). The values hold no secret: a credential names the Secret that

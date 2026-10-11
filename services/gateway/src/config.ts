@@ -71,6 +71,9 @@ export interface SecurityConfig {
   seedFile: string | undefined;
   // Host names that /mcp answers to (without port). Required: an empty list would turn the Host check off.
   allowedHosts: string[];
+  // The origin of the dashboard, for example https://gateway.example.com (scheme, host, optional port; no path). It is the
+  // only Origin that the login and the session routes accept, and its scheme decides whether the cookie is Secure.
+  publicOrigin: string;
 }
 
 const securitySchema = z.object({
@@ -78,7 +81,22 @@ const securitySchema = z.object({
   MASTER_KEY_ID: z.string().regex(/^[A-Za-z0-9_-]{1,32}$/).default('k1'),
   SEED_FILE: z.string().min(1).optional(),
   ALLOWED_HOSTS: z.string().min(1),
+  PUBLIC_ORIGIN: z.string().min(1),
 });
+
+// Returns the origin when the value is exactly an origin, and null otherwise.
+function exactOrigin(value: string): string | null {
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    return null;
+  }
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') return null;
+  if (url.username || url.password || url.search || url.hash || url.pathname !== '/') return null;
+  // "https://host/" and "https://host" are the same origin; a trailing slash is not part of an Origin header.
+  return value === url.origin || value === `${url.origin}/` ? url.origin : null;
+}
 
 // Paths and ids only. The key itself is read from the file by loadKeyring().
 export function loadSecurityConfig(env: NodeJS.ProcessEnv = process.env): SecurityConfig {
@@ -88,7 +106,9 @@ export function loadSecurityConfig(env: NodeJS.ProcessEnv = process.env): Securi
     .map((host) => host.trim())
     .filter((host) => host.length > 0);
   if (allowedHosts.length === 0) throw new ConfigError('invalid or missing configuration: ALLOWED_HOSTS');
-  return { masterKeyFile: parsed.data.MASTER_KEY_FILE, masterKeyId: parsed.data.MASTER_KEY_ID, seedFile: parsed.data.SEED_FILE, allowedHosts };
+  const publicOrigin = exactOrigin(parsed.data.PUBLIC_ORIGIN.trim());
+  if (!publicOrigin) throw new ConfigError('invalid or missing configuration: PUBLIC_ORIGIN');
+  return { masterKeyFile: parsed.data.MASTER_KEY_FILE, masterKeyId: parsed.data.MASTER_KEY_ID, seedFile: parsed.data.SEED_FILE, allowedHosts, publicOrigin };
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {

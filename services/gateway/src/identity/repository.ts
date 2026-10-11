@@ -109,6 +109,26 @@ export async function touchApiKey(db: Queryable, keyId: string): Promise<void> {
   );
 }
 
+export interface LoginUser {
+  id: string;
+  email: string;
+  role: Role;
+  status: string;
+  passwordHash: string | null;
+}
+
+// The only query that reads password_hash. The hash goes to the password check and nowhere else.
+export async function findUserForLogin(db: Queryable, email: string): Promise<LoginUser | null> {
+  const result = await db.query('SELECT id, email, role, status, password_hash FROM users WHERE email = $1', [email.trim().toLowerCase()]);
+  if (result.rowCount === 0) return null;
+  const row = result.rows[0];
+  return { id: row.id, email: row.email, role: row.role, status: row.status, passwordHash: row.password_hash };
+}
+
+export async function markLogin(db: Queryable, userId: string): Promise<void> {
+  await db.query('UPDATE users SET last_login_at = now() WHERE id = $1', [userId]);
+}
+
 function toUser(row: Record<string, unknown>): UserView {
   return { id: row.id as string, email: row.email as string, role: row.role as Role, status: row.status as string, createdAt: row.created_at as Date };
 }

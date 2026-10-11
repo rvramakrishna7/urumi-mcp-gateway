@@ -30,6 +30,7 @@ gateway:
 # A real DNS record for this host must point at the VPS (decision 8). It is a placeholder here.
 ingress:
   host: gateway.example.com
+  scheme: https
 
 postgres:
   persistence:

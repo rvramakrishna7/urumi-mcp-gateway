@@ -8,6 +8,8 @@ import { createLogger } from './logger.ts';
 import { createGateway } from './core/gateway.ts';
 import { applySeed, loadSeedFile, SeedError } from './registry/seed.ts';
 import { createMcpRouter } from './mcp/router.ts';
+import { sessionAuthConfig } from './auth/session.ts';
+import { createAuthRouter } from './routes/auth.ts';
 import { createPoller } from './upstream/poller.ts';
 
 const logger = createLogger();
@@ -45,11 +47,14 @@ const poller = createPoller({ db: pool, keyring, logger });
 
 const mcp = createMcpRouter({ db: pool, gateway, logger, allowedHosts: security.allowedHosts });
 
+const sessions = sessionAuthConfig(security.publicOrigin);
+
 const { app, beginShutdown } = createApp({
   logger,
   checkDatabase: () => checkDatabase(pool),
-  admin: { db: pool, keyring, logger, onServerChanged: () => poller.refreshNow() },
+  admin: { db: pool, keyring, logger, sessions, onServerChanged: () => poller.refreshNow() },
   mcp: mcp.router,
+  auth: createAuthRouter({ db: pool, logger, sessions }),
 });
 const server = app.listen(config.port, () => {
   logger.info('listening', { port: config.port });
