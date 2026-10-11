@@ -1,6 +1,7 @@
 import { Client, SdkError, SdkErrorCode, SdkHttpError, StreamableHTTPClientTransport, UnauthorizedError } from '@modelcontextprotocol/client';
 import type { FetchLike } from '@modelcontextprotocol/client';
 import type { PlainCredential } from '../registry/repository.ts';
+import { VERSION } from '../version.ts';
 
 // The only code in the gateway that talks to an upstream MCP server (docs/architecture.md, decision 28).
 // One connection per call: connect, do the work, close. Upstreams are stateless, so nothing is held between calls.
@@ -141,7 +142,7 @@ async function withSession<T>(
     requestInit: { headers: credentialHeaders(target.credential), redirect: 'error' },
     fetch: guardedFetch(session, controller, limits.maxResponseBytes),
   });
-  const client = new Client({ name: 'urumi-gateway', version: '0.3.0' });
+  const client = new Client({ name: 'urumi-gateway', version: VERSION });
 
   try {
     arm('connect', limits.connectTimeoutMs);

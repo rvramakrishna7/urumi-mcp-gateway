@@ -1,9 +1,9 @@
 import { Server } from '@modelcontextprotocol/server';
 import type { AuthInfo, McpRequestContext } from '@modelcontextprotocol/server';
 import type { Caller, Gateway } from '../core/gateway.ts';
+import { VERSION } from '../version.ts';
 
 export const SERVER_NAME = 'urumi-mcp-gateway';
-export const SERVER_VERSION = '0.4.0';
 
 // The identity of the caller travels in AuthInfo.extra. The user's API key is never put in AuthInfo: the SDK would
 // carry it into its own request context, and nothing below this point needs it.
@@ -26,7 +26,7 @@ function callerOf(authInfo: AuthInfo | undefined): Caller {
 export function createMcpServerFactory(gateway: Gateway): (context: McpRequestContext) => Server {
   return (context) => {
     const caller = callerOf(context.authInfo);
-    const server = new Server({ name: SERVER_NAME, version: SERVER_VERSION }, { capabilities: { tools: { listChanged: false } } });
+    const server = new Server({ name: SERVER_NAME, version: VERSION }, { capabilities: { tools: { listChanged: false } } });
 
     server.setRequestHandler('tools/list', async () => {
       const tools = await gateway.listTools(caller);
