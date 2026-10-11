@@ -26,7 +26,9 @@ const schema = { type: 'object', properties: { text: { type: 'string' } } };
 const tool = (name: string, extra: Partial<FakeTool> = {}): FakeTool => ({ name, description: `The ${name} tool`, inputSchema: schema, ...extra });
 
 // Short limits keep the failure cases quick. The production values (3 s, 5 s, 2 MB) are in DEFAULT_LIMITS.
-const limits: UpstreamLimits = { connectTimeoutMs: 400, listTimeoutMs: 400, maxResponseBytes: 64 * 1024 };
+// The connect timeout is 1000 ms (it was 400 ms): the fakes and the gateway share one event loop, the first poll opens 11
+// connections at once, and the test files run in parallel, so a healthy fake could miss 400 ms when the CPU was busy.
+const limits: UpstreamLimits = { connectTimeoutMs: 1000, listTimeoutMs: 400, maxResponseBytes: 64 * 1024 };
 
 describe('gateway core: aggregation, routing, isolation and audit, against fake upstreams (needs PostgreSQL)', { skip: skipWithoutDb }, () => {
   let db: TestDatabase;
@@ -121,7 +123,7 @@ describe('gateway core: aggregation, routing, isolation and audit, against fake 
     const report = await poller.refreshNow();
     t.diagnostic(`first poll of ${report.length} upstreams took ${Date.now() - started} ms`);
     const by = Object.fromEntries(report.map((entry) => [entry.slug, entry]));
-    for (const slug of ['fast', 'mixed', 'dying', 'huge', 'dup1', 'dup2', 'inv', 'many', 'bigschema']) assert.equal(by[slug].status, 'connected', slug);
+    for (const slug of ['fast', 'mixed', 'dying', 'huge', 'dup1', 'dup2', 'inv', 'many', 'bigschema']) assert.equal(by[slug].status, 'connected', `${slug}: ${by[slug].reason}`);
     assert.deepEqual([by.slow.status, by.slow.reason], ['unreachable', 'timeout']);
     assert.deepEqual([by.dead.status, by.dead.reason], ['unreachable', 'refused']);
   });
