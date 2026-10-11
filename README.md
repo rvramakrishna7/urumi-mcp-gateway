@@ -199,6 +199,7 @@ kubectl exec -n gateway deploy/gateway -c gateway -- node dist/cli.js user creat
 
 umask 077
 kubectl exec -n gateway deploy/gateway -c gateway -- node dist/cli.js key create --email member@urumi.test --name laptop > member.key
+kubectl exec -n gateway deploy/gateway -c gateway -- node dist/cli.js key create --email admin@urumi.test --name admin-laptop > admin.key
 ```
 
 The key starts with `mcpgw_`. The gateway stores only its SHA-256 hash, so it cannot be shown again; make a new one if it is lost. Other commands: `user list`, `key list --email <email>` and `key revoke --id <key id>` (a revoked key gets 401 on the very next request). `--help` prints the usage. Do not commit key files.
