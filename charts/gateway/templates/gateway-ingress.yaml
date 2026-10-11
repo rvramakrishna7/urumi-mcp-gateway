@@ -1,7 +1,8 @@
 {{- /*
-The only public door of the gateway. Four exact prefixes are routed and nothing else, so a path that the gateway might
-gain later is not exposed by accident. Traefik passes the original Host header on, and /mcp checks it against
-ingress.host (ALLOWED_HOSTS). PostgreSQL has no Ingress.
+The only public door of the gateway. Three exact prefixes are routed and nothing else, so a path that the gateway might
+gain later is not exposed by accident. /readyz is not routed: the kubelet probes the pod directly, and the readiness
+answer says nothing that an outside caller needs. Traefik passes the original Host header on, and /mcp checks it
+against ingress.host (ALLOWED_HOSTS). PostgreSQL has no Ingress.
 */ -}}
 {{- if .Values.ingress.enabled }}
 apiVersion: networking.k8s.io/v1
@@ -17,7 +18,7 @@ spec:
     - host: {{ required "ingress.host is required" .Values.ingress.host | quote }}
       http:
         paths:
-          {{- range list "/mcp" "/healthz" "/readyz" "/api/admin" }}
+          {{- range list "/mcp" "/healthz" "/api/admin" }}
           - path: {{ . }}
             pathType: Prefix
             backend:
