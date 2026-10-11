@@ -176,8 +176,8 @@ The gateway keeps the list of upstream MCP servers, offers one public MCP endpoi
 ### 1. Build the image and install the chart
 
 ```bash
-docker build -t gateway:0.6.3 services/gateway
-k3d image import gateway:0.6.3 -c urumi
+docker build -t gateway:0.7.0 services/gateway
+k3d image import gateway:0.7.0 -c urumi
 
 helm upgrade --install gateway charts/gateway \
   --namespace gateway --create-namespace \
@@ -187,7 +187,7 @@ helm test gateway -n gateway
 kubectl logs -n gateway pod/gateway-checks
 ```
 
-The release has PostgreSQL (a StatefulSet with a persistent volume) and the gateway Deployment. A `migrate` initContainer creates the schema before the server starts. The test pod prints PASS lines (names and counts only): the database, the migrations, the tables, the seeded server `woo` with an encrypted credential, and the public routes. The Ingress routes only `/mcp`, `/healthz`, `/api/admin`, `/api/auth` and `/api/me`: `curl -i http://gateway.urumi.test/readyz` answers 404 on purpose. The values file `values-local.yaml` sets `bootstrap.adminEmail`, so the install also makes the Secret `gateway-bootstrap` (one random invite token) and the gateway creates that admin at start, without a password.
+The release has PostgreSQL (a StatefulSet with a persistent volume) and the gateway Deployment. A `migrate` initContainer creates the schema before the server starts. The test pod prints PASS lines (names and counts only): the database, the migrations, the tables, the seeded server `woo` with an encrypted credential, and the public routes. The Ingress routes only `/mcp`, `/healthz`, `/api/admin`, `/api/auth`, `/api/me` and `/api/audit`: `curl -i http://gateway.urumi.test/readyz` answers 404 on purpose. The values file `values-local.yaml` sets `bootstrap.adminEmail`, so the install also makes the Secret `gateway-bootstrap` (one random invite token) and the gateway creates that admin at start, without a password.
 
 ### 2. Set the password of the first admin, then create users and keys
 
@@ -299,10 +299,26 @@ The admin actions (invite, disable, revoke) are written to the gateway log (ids 
 
 ### 6. Read the audit log
 
-Every tool call has a row, written before the call and finished after it, whether it came from an external client or (later) the chat agent. There is no audit page yet; read the table:
+Every tool call has a row, written before the call and finished after it, whether it came from an external client (`via` is `mcp`) or (later) the chat agent (`via` is `chat`). The dashboard reads the rows through `GET /api/audit`. The route takes the **session cookie only** (an API key is 401), and the scope is applied in the SQL: an **admin** sees every row, a **member** sees only their own rows, and a member who sends `userId` gets 400. Arguments and results are never stored, so they cannot be returned.
+
+| Parameter | Meaning |
+|---|---|
+| `limit` | 1 to 200, default 50 |
+| `cursor` | the `nextCursor` of the previous page (rows with a smaller id; keyset, not offset) |
+| `userId` | admin only |
+| `server`, `tool` | exact match (`server` is the slug) |
+| `outcome` | `started`, `ok`, `error`, `timeout`, `unreachable`, `unknown_tool`, `denied` or `interrupted`; repeat the parameter for several |
+| `via` | `mcp` or `chat` |
+| `from`, `to` | ISO timestamps with a zone (`2026-10-11T00:00:00Z`); `from` is included, `to` is not; at most 90 days apart |
+
+Any other parameter or a bad value is 400 (the answer names the field, never the value). The answer is `{ "items": [...], "nextCursor": "123" | null }`, newest first. A row that stays `started` is a call that has not ended (or one that was cut off: the sweeper that marks it `interrupted` is not built). Example, with the session cookie of a signed-in user in `cookies.txt` (log in with `-c cookies.txt` added to the login request):
+
+```bash
+curl -s -b cookies.txt 'http://gateway.urumi.test/api/audit?limit=5&outcome=ok&outcome=error'
+```
+
+You can still read the table directly:
 
 ```bash
 kubectl exec -n gateway postgres-0 -- sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "SELECT ts, user_email, via, server_slug, tool, outcome, error_kind, duration_ms FROM audit_log ORDER BY id DESC LIMIT 10"'
 ```
-
-`outcome` is `ok`, `error`, `timeout`, `unreachable` or `unknown_tool`; `via` is `mcp` for an external client. Arguments and results are never stored.
