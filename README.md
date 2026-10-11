@@ -176,8 +176,8 @@ The gateway keeps the list of upstream MCP servers, offers one public MCP endpoi
 ### 1. Build the image and install the chart
 
 ```bash
-docker build -t gateway:0.6.2 services/gateway
-k3d image import gateway:0.6.2 -c urumi
+docker build -t gateway:0.6.3 services/gateway
+k3d image import gateway:0.6.3 -c urumi
 
 helm upgrade --install gateway charts/gateway \
   --namespace gateway --create-namespace \
@@ -213,11 +213,16 @@ unset PW; rm -f bootstrap.token
 kubectl exec -n gateway deploy/gateway -c gateway -- node dist/cli.js user invite --email admin@urumi.test > invite.token   # prints the token once
 ```
 
-**API keys.** A signed-in user makes and revokes their own keys through `/api/me/keys` (session only). The command-line tool can also make a key for a user who is active; redirect stdout to a file so the key is not printed, and keep that file private:
+The new owner of the account sets the password with the accept-invite command above, with `invite.token` in place of `bootstrap.token`; delete `invite.token` afterwards.
+
+**API keys.** A signed-in user makes and revokes their own keys through `/api/me/keys` (session only, for the dashboard). For the commands in the sections below you need two key files, `admin.key` and `member.key`. The command-line tool makes a key for a user who is active; the new key is the only thing on stdout, so redirect it to a file (it is not printed) and keep the file private. The admin is active after the step above. The member is made first, with the CLI (active at once, no password; for a real member use the invite of section 5 instead):
 
 ```bash
 umask 077
-kubectl exec -n gateway deploy/gateway -c gateway -- node dist/cli.js key create --email member@example.com --name laptop > member.key
+kubectl exec -n gateway deploy/gateway -c gateway -- node dist/cli.js key create --email admin@urumi.test --name admin-laptop > admin.key
+
+kubectl exec -n gateway deploy/gateway -c gateway -- node dist/cli.js user create --email member@urumi.test --role member
+kubectl exec -n gateway deploy/gateway -c gateway -- node dist/cli.js key create --email member@urumi.test --name laptop > member.key
 ```
 
 The key starts with `mcpgw_`. The gateway stores only its SHA-256 hash, so it cannot be shown again; make a new one if it is lost. Other commands: `user list`, `user create --email <email> --role admin|member` (active at once, no password; for a script or a test), `key list --email <email>` and `key revoke --id <key id>` (a revoked key gets 401 on the very next request). `--help` prints the usage. Do not commit key or token files.
