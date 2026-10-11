@@ -23,4 +23,4 @@ done
 
 PORT=$(docker port "$NAME" 5432/tcp | head -1 | sed 's/.*://')
 echo "PostgreSQL ($IMAGE) is ready on 127.0.0.1:$PORT"
-TEST_DB_HOST=127.0.0.1 TEST_DB_PORT="$PORT" TEST_DB_USER=postgres TEST_DB_PASSWORD="$PASSWORD" node --test
+TEST_DB_HOST=127.0.0.1 TEST_DB_PORT="$PORT" TEST_DB_USER=postgres TEST_DB_PASSWORD="$PASSWORD" node --test --test-concurrency=1
