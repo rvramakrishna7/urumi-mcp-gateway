@@ -2,7 +2,7 @@
 
 WooCommerce store with a team MCP gateway, deployed on Kubernetes with Helm.
 
-The local store and the WooCommerce MCP server are documented so far. The rest is added as it is built and verified.
+The local store, the WooCommerce MCP server and the gateway backend are documented so far. The rest is added as it is built and verified.
 
 ## Local setup
 
@@ -168,3 +168,89 @@ A failure that is expected, such as an invalid argument or the store being down,
 ### 5. Keys and tokens
 
 The WooCommerce key comes from the store. After a rotation there (the commands are in decision 15 of `docs/architecture.md`), run the `helm upgrade` of step 3 again: the pod restarts with the new key. The bearer token is generated once and kept across upgrades. To rotate it, delete the Secret `woo-mcp-auth`, run the `helm upgrade` of step 3, and then run `kubectl rollout restart deployment/woo-mcp -n mcp-servers`. This token procedure was not run during testing; the key rotation was.
+
+## Gateway (gateway)
+
+The gateway keeps the list of upstream MCP servers, offers one public MCP endpoint (`/mcp`) to clients with a user API key, and writes an audit row for every tool call. Install the store and mcp-servers charts first (the sections above): the gateway chart copies the woo-mcp token from the Secret `woo-mcp-auth` and registers woo-mcp at install, and the install stops with a message if that Secret is missing. The hosts file entry for `gateway.urumi.test` is the one from step 2 of the local setup. Run the commands from the repository root. The tests of the gateway are in `services/gateway`: `npm test` needs no Docker, and `npm run test:db` starts a throwaway PostgreSQL in Docker and runs everything.
+
+### 1. Build the image and install the chart
+
+```bash
+docker build -t gateway:0.5.0 services/gateway
+k3d image import gateway:0.5.0 -c urumi
+
+helm upgrade --install gateway charts/gateway \
+  --namespace gateway --create-namespace \
+  -f charts/gateway/values-local.yaml \
+  --wait --timeout 5m
+helm test gateway -n gateway
+kubectl logs -n gateway pod/gateway-checks
+```
+
+The release has PostgreSQL (a StatefulSet with a persistent volume) and the gateway Deployment. A `migrate` initContainer creates the schema before the server starts. The test pod prints PASS lines (names and counts only): the database, the migrations, the tables, the seeded server `woo` with an encrypted credential, and the public routes. The Ingress routes only `/mcp`, `/healthz` and `/api/admin`: `curl -i http://gateway.urumi.test/readyz` answers 404 on purpose.
+
+### 2. Create a user and a key
+
+There is no login yet (the dashboard comes later), so users and keys are made with the command-line tool inside the gateway pod. The new key is the only thing on stdout; redirect it to a file so that it is not printed, and keep that file private:
+
+```bash
+kubectl exec -n gateway deploy/gateway -c gateway -- node dist/cli.js user create --email admin@urumi.test --role admin
+kubectl exec -n gateway deploy/gateway -c gateway -- node dist/cli.js user create --email member@urumi.test --role member
+
+umask 077
+kubectl exec -n gateway deploy/gateway -c gateway -- node dist/cli.js key create --email member@urumi.test --name laptop > member.key
+```
+
+The key starts with `mcpgw_`. The gateway stores only its SHA-256 hash, so it cannot be shown again; make a new one if it is lost. Other commands: `user list`, `key list --email <email>` and `key revoke --id <key id>` (a revoked key gets 401 on the very next request). `--help` prints the usage. Do not commit key files.
+
+### 3. Connect an MCP client
+
+The URL is `http://gateway.urumi.test/mcp` and the key goes in the header `Authorization: Bearer <key>`.
+
+Claude Code, with a configuration file that is used only for this call:
+
+```bash
+printf '{"mcpServers":{"urumi":{"type":"http","url":"http://gateway.urumi.test/mcp","headers":{"Authorization":"Bearer %s"}}}}' "$(cat member.key)" > mcp.json
+claude -p "Call woo__list_products and answer with the product names only." \
+  --mcp-config mcp.json --strict-mcp-config --allowedTools "mcp__urumi__woo__list_products"
+rm mcp.json
+```
+
+MCP Inspector in CLI mode (it asks again on every call):
+
+```bash
+npx -y @modelcontextprotocol/inspector@2.10.1 --cli http://gateway.urumi.test/mcp \
+  --transport http --header "Authorization: Bearer $(cat member.key)" --method tools/list
+```
+
+Both were run against this cluster: the member saw the five tools `woo__create_product`, `woo__get_order`, `woo__list_orders`, `woo__list_products` and `woo__update_order_status`, and Claude Code answered with the product names of the store. The tool names are `<server slug>__<tool>`, so two servers with a tool of the same name stay apart. A client reads the tool list once when it connects, so after a server is disabled it must reconnect to see the change; a call from an old list is refused with `Unknown tool`.
+
+### 4. Register, disable and remove an upstream server
+
+The admin API needs the key of an admin (a member gets 403). It never returns a credential, only `credential: {set: true, ...}`.
+
+```bash
+ADMIN="Authorization: Bearer $(cat admin.key)"
+API=http://gateway.urumi.test/api/admin/servers
+
+curl -s $API -H "$ADMIN"                                   # list, with the status of each server
+
+curl -s -X POST $API -H "$ADMIN" -H 'content-type: application/json' \
+  -d '{"slug":"demo","name":"Demo server","url":"http://demo.demo-ns.svc.cluster.local:8080/mcp","credential":{"kind":"bearer","value":"<the upstream token>"}}'
+
+curl -s -X PATCH $API/<id> -H "$ADMIN" -H 'content-type: application/json' -d '{"enabled":false}'   # disable
+curl -s -X PATCH $API/<id> -H "$ADMIN" -H 'content-type: application/json' -d '{"enabled":true}'    # enable again
+curl -s -X DELETE $API/<id> -H "$ADMIN"                    # remove (204)
+```
+
+`<id>` is the `id` in the list. A slug is lowercase letters, digits and `-`, at most 20 characters, and starts with a letter. A create or an update refreshes the tool list and the status at once, without waiting for the 15 second poll, so the next `tools/list` already shows the change. A server that cannot be reached is `unreachable` with a short reason (`refused`, `timeout`, `http_401`, `credential_unreadable`) and contributes no tools; the other servers are not affected. The upstream credential stays inside the gateway: it is encrypted in the database and is never sent to a client.
+
+### 5. Read the audit log
+
+Every tool call has a row, written before the call and finished after it, whether it came from an external client or (later) the chat agent. There is no audit page yet; read the table:
+
+```bash
+kubectl exec -n gateway postgres-0 -- sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "SELECT ts, user_email, via, server_slug, tool, outcome, error_kind, duration_ms FROM audit_log ORDER BY id DESC LIMIT 10"'
+```
+
+`outcome` is `ok`, `error`, `timeout`, `unreachable` or `unknown_tool`; `via` is `mcp` for an external client. Arguments and results are never stored.
