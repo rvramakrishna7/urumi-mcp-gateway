@@ -1,0 +1,11 @@
+# The Dockerfile needs package.json, package-lock.json, .npmrc, the TypeScript and Vite configuration, index.html,
+# public, src, nginx.conf and security-headers.conf.
+node_modules
+dist
+test
+Dockerfile
+.dockerignore
+vitest.config.ts
+.env
+.env.*
+*.log

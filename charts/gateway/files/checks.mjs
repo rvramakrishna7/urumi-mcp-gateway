@@ -8,6 +8,7 @@ import { createRequire } from 'node:module';
 const pg = createRequire('/app/package.json')('pg');
 
 const base = process.env.GATEWAY_URL;
+const dashboardBase = process.env.DASHBOARD_URL;
 let failed = false;
 
 function check(name, ok, detail = '') {
@@ -74,6 +75,16 @@ try {
   check('the admin API answers 401 without a key', (await http('/api/admin/servers')) === 401);
 } catch (error) {
   check('the HTTP checks ran without an exception', false, error instanceof Error ? error.name : 'unknown');
+}
+
+try {
+  const index = await fetch(`${dashboardBase}/`, { signal: AbortSignal.timeout(10_000) });
+  const csp = index.headers.get('content-security-policy') ?? '';
+  check('dashboard: GET / answers 200', index.status === 200);
+  check('dashboard: GET / sends a Content-Security-Policy', csp.includes("script-src 'self'") && !csp.includes('unsafe-inline'));
+  check('dashboard: GET /api/does-not-exist answers 404', (await fetch(`${dashboardBase}/api/does-not-exist`, { signal: AbortSignal.timeout(10_000) })).status === 404);
+} catch (error) {
+  check('the dashboard checks ran without an exception', false, error instanceof Error ? error.name : 'unknown');
 }
 
 process.exit(failed ? 1 : 0);
