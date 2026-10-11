@@ -66,6 +66,16 @@ export function createAuthRouter({ db, logger, sessions, now }: AuthRouterDeps):
       // An unknown email, a user without a password and a disabled user all take the same path as a wrong password.
       const usable = user !== null && user.status === 'active' ? user : null;
       const accepted = await verifyOrDummy(password, usable?.passwordHash ?? null);
+      // The lock was checked before the slow hash, but a burst of parallel requests all pass that check before the first
+      // failure is written. So it is checked again here, for a right and a wrong password alike: a request that finds the
+      // email locked is refused with the same answer in both cases (no session, and the answer does not tell which password
+      // was right) and writes no failure, so late requests do not extend the lock.
+      const lockedAfter = await lockedSeconds(db, key);
+      if (lockedAfter > 0) {
+        logger.warn('login refused', { reason: 'locked_during_check' });
+        tooManyAttempts(res, lockedAfter);
+        return;
+      }
       if (!accepted || !usable) {
         await recordFailure(db, key);
         logger.warn('login failed', { reason: 'bad_credentials' });
