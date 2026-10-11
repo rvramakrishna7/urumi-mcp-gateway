@@ -131,6 +131,38 @@ describe('loadSecurityConfig: PUBLIC_ORIGIN', () => {
   });
 });
 
+describe('loadSecurityConfig: the bootstrap admin', () => {
+  const env = (overrides: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv => ({
+    MASTER_KEY_FILE: '/secrets/master/key',
+    ALLOWED_HOSTS: 'gateway.urumi.test',
+    PUBLIC_ORIGIN: 'http://gateway.urumi.test',
+    ...overrides,
+  });
+
+  test('is off when neither variable is set', () => {
+    assert.equal(loadSecurityConfig(env()).bootstrap, undefined);
+  });
+
+  test('takes both, and normalises the email', () => {
+    assert.deepEqual(loadSecurityConfig(env({ BOOTSTRAP_ADMIN_EMAIL: ' Admin@Urumi.test ', BOOTSTRAP_TOKEN_FILE: '/secrets/bootstrap/inviteToken' })).bootstrap, {
+      adminEmail: 'admin@urumi.test',
+      tokenFile: '/secrets/bootstrap/inviteToken',
+    });
+  });
+
+  test('one without the other, or a bad email, is refused and the message names the variables only', () => {
+    const cases: NodeJS.ProcessEnv[] = [
+      { BOOTSTRAP_ADMIN_EMAIL: 'admin@urumi.test' },
+      { BOOTSTRAP_TOKEN_FILE: '/secrets/bootstrap/inviteToken' },
+      { BOOTSTRAP_ADMIN_EMAIL: 'not-an-email', BOOTSTRAP_TOKEN_FILE: '/x' },
+      { BOOTSTRAP_ADMIN_EMAIL: 'a@b@c', BOOTSTRAP_TOKEN_FILE: '/x' },
+    ];
+    for (const overrides of cases) {
+      assert.throws(() => loadSecurityConfig(env(overrides)), (error: unknown) => error instanceof ConfigError && error.message.includes('BOOTSTRAP_ADMIN_EMAIL') && !error.message.includes('not-an-email'));
+    }
+  });
+});
+
 describe('loadSecurityConfig: ALLOWED_HOSTS', () => {
   const env = (overrides: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv => ({ MASTER_KEY_FILE: '/secrets/master/key', ALLOWED_HOSTS: 'gateway.urumi.test', PUBLIC_ORIGIN: 'http://gateway.urumi.test', ...overrides });
 

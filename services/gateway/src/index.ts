@@ -10,6 +10,7 @@ import { applySeed, loadSeedFile, SeedError } from './registry/seed.ts';
 import { createMcpRouter } from './mcp/router.ts';
 import { sessionAuthConfig } from './auth/session.ts';
 import { createAuthRouter } from './routes/auth.ts';
+import { applyBootstrap, BootstrapError, readBootstrapToken } from './identity/invites.ts';
 import { createPoller } from './upstream/poller.ts';
 
 const logger = createLogger();
@@ -39,6 +40,17 @@ try {
   if (security.seedFile) await applySeed(pool, keyring, loadSeedFile(security.seedFile), logger);
 } catch (error) {
   logger.error('startup failed', { reason: error instanceof SeedError ? error.message : 'the seed could not be applied', errorName: error instanceof Error ? error.name : 'unknown' });
+  process.exit(1);
+}
+
+// The first admin: created, or armed again, before the server listens. Like the seed, a failure stops the start.
+try {
+  if (security.bootstrap) {
+    const action = await applyBootstrap(pool, security.bootstrap.adminEmail, readBootstrapToken(security.bootstrap.tokenFile));
+    logger.info('bootstrap admin', { action });
+  }
+} catch (error) {
+  logger.error('startup failed', { reason: error instanceof BootstrapError ? error.message : 'the bootstrap admin could not be applied', errorName: error instanceof Error ? error.name : 'unknown' });
   process.exit(1);
 }
 

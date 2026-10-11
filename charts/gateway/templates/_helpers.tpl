@@ -120,3 +120,10 @@ Pass a dict with "root" and "entry".
 {{- "offline-render-placeholder" | b64enc -}}
 {{- end -}}
 {{- end -}}
+
+{{/*
+Name of the Secret that holds the invite token of the first admin (decision 36).
+*/}}
+{{- define "gateway.bootstrapSecretName" -}}
+gateway-bootstrap
+{{- end -}}

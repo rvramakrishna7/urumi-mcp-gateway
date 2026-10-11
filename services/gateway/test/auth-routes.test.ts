@@ -15,6 +15,7 @@ import { createGateway } from '../src/core/gateway.ts';
 import { loadKeyring } from '../src/crypto/credentials.ts';
 import { loadMigrationFiles, runMigrations } from '../src/db/migrate.ts';
 import { createApiKey, createUser } from '../src/identity/repository.ts';
+import { generateInviteToken, issueInvite } from '../src/identity/invites.ts';
 import { createLogger } from '../src/logger.ts';
 import { createMcpRouter } from '../src/mcp/router.ts';
 import { createAuthRouter } from '../src/routes/auth.ts';
@@ -413,6 +414,98 @@ describe('login, sessions and the admin API with a session (needs PostgreSQL)', 
       const wrongKey = `mcpgw_${randomBytes(32).toString('base64url')}`;
       assert.equal((await call('GET', '/api/admin/servers', { headers: { authorization: `Bearer ${wrongKey}`, ...withSession(adminToken) } })).status, 401);
       assert.equal((await call('GET', '/api/admin/servers', { headers: { authorization: 'Bearer nonsense', ...withSession(adminToken) } })).status, 401);
+    });
+  });
+
+  describe('POST /api/auth/accept-invite', () => {
+    const accept = (token: string, password: string, origin: string | null = ORIGIN) =>
+      call('POST', '/api/auth/accept-invite', { body: { token, password }, headers: origin === null ? {} : { origin } });
+    const invited = async (email: string, status = 'invited') => {
+      await makeUser(email, 'member', null);
+      const id = (await pool.query('SELECT id FROM users WHERE email = $1', [email])).rows[0].id as string;
+      const token = (await issueInvite(pool, id))!;
+      // The status is set after the invite is issued: a disabled user cannot be given one.
+      await pool.query('UPDATE users SET status = $2 WHERE id = $1', [id, status]);
+      return { id, token };
+    };
+
+    test('a valid invite sets the password, signs the person in, and the password then works at login', async () => {
+      const { token } = await invited('accept1@example.com');
+      const reply = await accept(token, 'chosen by the person 1');
+      assert.equal(reply.status, 200);
+      assert.deepEqual(Object.keys(reply.json), ['user']);
+      assert.equal(reply.json.user.email, 'accept1@example.com');
+      assert.equal(reply.headers.get('cache-control'), 'no-store');
+      assert.match(reply.headers.getSetCookie()[0]!, /^session=[A-Za-z0-9_-]{43}; Max-Age=43200; Path=\/; HttpOnly; SameSite=Strict$/);
+      assert.equal((await call('GET', '/api/auth/me', { headers: withSession(reply.token!) })).status, 200);
+      assert.equal((await login('accept1@example.com', 'chosen by the person 1')).status, 200);
+      assert.equal((await login('accept1@example.com', 'not chosen by anyone')).status, 401);
+    });
+
+    test('a request without the dashboard origin is refused and the token is not used up', async () => {
+      const { token } = await invited('accept2@example.com');
+      for (const origin of [null, 'http://evil.example']) {
+        assert.equal((await accept(token, 'chosen by the person 2', origin)).status, 403);
+      }
+      assert.equal((await accept(token, 'chosen by the person 2')).status, 200);
+    });
+
+    test('a used token, a wrong token, an expired token and a disabled user all get the same 400', async () => {
+      const used = await invited('accept3@example.com');
+      await accept(used.token, 'chosen by the person 3');
+      const expired = await invited('accept4@example.com');
+      await pool.query("UPDATE users SET invite_expires_at = now() - interval '1 second' WHERE id = $1", [expired.id]);
+      const disabled = await invited('accept5@example.com', 'disabled');
+      const bodies = new Set<string>();
+      for (const token of [used.token, generateInviteToken(), expired.token, disabled.token, 'inv_short']) {
+        const reply = await accept(token, 'chosen by the person 4');
+        assert.equal(reply.status, 400);
+        assert.equal(reply.headers.get('set-cookie'), null);
+        bodies.add(JSON.stringify(reply.json));
+      }
+      assert.deepEqual([...bodies], ['{"error":"invalid or expired invite"}']);
+    });
+
+    test('a weak password is 400 with a reason that does not repeat it, and the invite still works afterwards', async () => {
+      const { token } = await invited('accept6@example.com');
+      const reply = await accept(token, 'tooshort');
+      assert.equal(reply.status, 400);
+      assert.equal(reply.json.error, 'weak password');
+      assert.match(reply.json.reason, /at least 12/);
+      assert.equal(JSON.stringify(reply.json).includes('tooshort'), false);
+      assert.equal(reply.headers.get('set-cookie'), null);
+      assert.equal((await accept(token, 'a long enough password 6')).status, 200);
+    });
+
+    test('a body that is not the expected JSON is 400, and a big one is 413', async () => {
+      const send = (body: unknown) => fetch(`${base}/api/auth/accept-invite`, { method: 'POST', headers: { 'content-type': 'application/json', origin: ORIGIN }, body: JSON.stringify(body) });
+      assert.equal((await send({})).status, 400);
+      assert.equal((await send({ token: generateInviteToken() })).status, 400);
+      assert.equal((await send({ token: 5, password: 'a long enough password' })).status, 400);
+      assert.equal((await send({ token: generateInviteToken(), password: 'a long enough password', pad: 'x'.repeat(5000) })).status, 413);
+    });
+
+    test('accepting a reset invite ends the sessions that existed, and the old password stops working', async () => {
+      await makeUser('accept7@example.com', 'member', sharedHash);
+      const old = (await login('accept7@example.com', PASSWORD)).token!;
+      const id = (await pool.query("SELECT id FROM users WHERE email = 'accept7@example.com'")).rows[0].id as string;
+      const token = (await issueInvite(pool, id))!;
+      assert.equal((await call('GET', '/api/auth/me', { headers: withSession(old) })).status, 200);
+      const reply = await accept(token, 'the new password for 7');
+      assert.equal(reply.status, 200);
+      assert.equal((await call('GET', '/api/auth/me', { headers: withSession(old) })).status, 401);
+      assert.equal((await login('accept7@example.com', PASSWORD)).status, 401);
+      assert.equal((await login('accept7@example.com', 'the new password for 7')).status, 200);
+    });
+
+    test('neither the token nor the password is written to the log', async () => {
+      const { token } = await invited('accept8@example.com');
+      await accept(token, 'tooshort-for-the-scan');
+      await accept(token, 'a password for the scan 8');
+      const log = logLines.join(' ');
+      for (const secret of [token, 'tooshort-for-the-scan', 'a password for the scan 8']) assert.equal(log.includes(secret), false);
+      assert.ok(logLines.some((line) => line.includes('"message":"invite accepted"')));
+      assert.equal(logLines.filter((line) => /"message":"invite/.test(line)).join(' ').includes('@'), false);
     });
   });
 

@@ -10,6 +10,7 @@ import { createSession, deleteSession, sessionClearCookie, sessionSetCookie } fr
 import type { SessionAuthConfig } from '../auth/session.ts';
 import { clearFailures, emailThrottleKey, lockedSeconds, recordFailure } from '../auth/throttle.ts';
 import { findUserForLogin, markLogin } from '../identity/repository.ts';
+import { acceptInvite } from '../identity/invites.ts';
 
 export interface AuthRouterDeps {
   db: Database;
@@ -21,6 +22,11 @@ export interface AuthRouterDeps {
 const loginSchema = z.object({
   email: z.string().min(3).max(254),
   // Long enough for any real password (the limit for a new one is 128), short enough to bound the work of one request.
+  password: z.string().min(1).max(1024),
+});
+
+const acceptSchema = z.object({
+  token: z.string().min(1).max(100),
   password: z.string().min(1).max(1024),
 });
 
@@ -74,6 +80,33 @@ export function createAuthRouter({ db, logger, sessions, now }: AuthRouterDeps):
       res.json({ user: { id: usable.id, email: usable.email, role: usable.role } });
     } catch (error) {
       logger.error('login request failed', { errorName: error instanceof Error ? error.name : 'unknown' });
+      res.status(500).json({ error: 'internal error' });
+    }
+  });
+
+  // Sets the password of the person whom the invite belongs to and signs them in. The token is the proof of identity: it has
+  // 256 bits of randomness, so guessing it is not possible and the route needs no throttle (the slow hash runs only after
+  // a valid token). Every wrong, expired, used or disabled-user token gets the same answer.
+  router.post('/accept-invite', requireSameOrigin(sessions.publicOrigin), express.json({ limit: '4kb' }), async (req, res) => {
+    const parsed = acceptSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: 'invalid request' });
+      return;
+    }
+    try {
+      const result = await acceptInvite(db, parsed.data.token, parsed.data.password);
+      if (!result.ok) {
+        logger.warn('invite refused', { reason: result.reason });
+        if (result.reason === 'weak') res.status(400).json({ error: 'weak password', reason: result.problem });
+        else res.status(400).json({ error: 'invalid or expired invite' });
+        return;
+      }
+      const { token } = await createSession(db, result.user.id);
+      res.setHeader('Set-Cookie', sessionSetCookie(sessions.cookie, token));
+      logger.info('invite accepted', { userId: result.user.id });
+      res.json({ user: result.user });
+    } catch (error) {
+      logger.error('accept-invite request failed', { errorName: error instanceof Error ? error.name : 'unknown' });
       res.status(500).json({ error: 'internal error' });
     }
   });

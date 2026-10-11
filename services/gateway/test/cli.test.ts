@@ -6,7 +6,7 @@ import { spawnSync } from 'node:child_process';
 const run = (...args: string[]) => spawnSync(process.execPath, ['src/cli.ts', ...args], { encoding: 'utf8', env: { PATH: process.env.PATH ?? '' } });
 
 describe('cli usage', () => {
-  for (const args of [['--help'], ['--bogus'], ['user', 'create', '--email'], ['user', '--unknown', 'x']]) {
+  for (const args of [['--help'], ['--bogus'], ['user', 'create', '--email'], ['user', '--unknown', 'x'], ['user', 'invite', '--email']]) {
     test(`"${args.join(' ')}" prints the usage and exits with 2, without a stack trace and without stdout`, () => {
       const result = run(...args);
       assert.equal(result.status, 2);

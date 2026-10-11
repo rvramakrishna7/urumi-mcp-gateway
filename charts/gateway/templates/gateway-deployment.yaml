@@ -24,6 +24,10 @@ spec:
         app.kubernetes.io/component: gateway
       annotations:
         checksum/seed: {{ cat (include "gateway.seedJson" .) (join "," $seedValues) | sha256sum }}
+        {{- if .Values.bootstrap.adminEmail }}
+        # The first admin is applied at start, so a changed e-mail restarts the pod. The token is not in this digest: it never changes.
+        checksum/bootstrap: {{ .Values.bootstrap.adminEmail | sha256sum }}
+        {{- end }}
     spec:
       # The gateway never talks to the Kubernetes API, so it gets no ServiceAccount token.
       automountServiceAccountToken: false
@@ -80,6 +84,12 @@ spec:
             # The Host names that /mcp answers to (DNS rebinding protection). The health routes ignore it.
             - name: ALLOWED_HOSTS
               value: {{ required "ingress.host is required" .Values.ingress.host | quote }}
+            {{- if .Values.bootstrap.adminEmail }}
+            - name: BOOTSTRAP_ADMIN_EMAIL
+              value: {{ .Values.bootstrap.adminEmail | quote }}
+            - name: BOOTSTRAP_TOKEN_FILE
+              value: /secrets/bootstrap/inviteToken
+            {{- end }}
             # The origin of the dashboard: the only Origin that login and session requests accept. Its scheme decides whether
             # the session cookie is Secure.
             - name: PUBLIC_ORIGIN
@@ -121,6 +131,11 @@ spec:
             - name: seed-credentials
               mountPath: /secrets/seed
               readOnly: true
+            {{- if .Values.bootstrap.adminEmail }}
+            - name: bootstrap-token
+              mountPath: /secrets/bootstrap
+              readOnly: true
+            {{- end }}
             - name: seed-config
               mountPath: /config/seed
               readOnly: true
@@ -137,6 +152,15 @@ spec:
           secret:
             secretName: {{ include "gateway.seedSecretName" . }}
             defaultMode: 0440
+        {{- if .Values.bootstrap.adminEmail }}
+        - name: bootstrap-token
+          secret:
+            secretName: {{ include "gateway.bootstrapSecretName" . }}
+            defaultMode: 0440
+            items:
+              - key: inviteToken
+                path: inviteToken
+        {{- end }}
         - name: seed-config
           configMap:
             name: {{ include "gateway.seedConfigName" . }}

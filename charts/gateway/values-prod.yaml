@@ -9,7 +9,7 @@ gateway:
   image:
     # The image comes from a registry that the VPS can reach, not from "k3d image import".
     repository: registry.example.com/urumi/gateway
-    tag: "0.5.0"
+    tag: "0.6.0"
     pullPolicy: IfNotPresent
   # The Secret must exist in the namespace gateway before the install. Create it with your own credentials
   # (never put them in this file or in Git):
@@ -31,6 +31,10 @@ gateway:
 ingress:
   host: gateway.example.com
   scheme: https
+
+# A placeholder: use the real address of the first admin.
+bootstrap:
+  adminEmail: admin@example.com
 
 postgres:
   persistence:

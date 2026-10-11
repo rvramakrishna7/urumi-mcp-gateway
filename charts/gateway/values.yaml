@@ -6,7 +6,7 @@ gateway:
   image:
     repository: gateway
     # Pinned to an exact version. Never use latest.
-    tag: "0.5.0"
+    tag: "0.6.0"
     pullPolicy: IfNotPresent
   # Names of Secrets (of type kubernetes.io/dockerconfigjson) that hold registry credentials. Empty for the
   # local cluster, where the image is imported with "k3d image import".
@@ -40,6 +40,11 @@ ingress:
   # http or https. It is the scheme of PUBLIC_ORIGIN: https makes the session cookie Secure. Set https only together with TLS.
   scheme: http
   host: ""
+
+# The first admin (decision 36). The gateway creates this user as an invited admin, with a random token from the Secret
+# "gateway-bootstrap". Whoever reads the token chooses the password. Empty means no bootstrap and no Secret.
+bootstrap:
+  adminEmail: ""
 
 # Servers that the install registers once (decision 31). The values hold no secret: a credential names the Secret that
 # holds the value, and the chart copies it with lookup.

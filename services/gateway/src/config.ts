@@ -74,6 +74,8 @@ export interface SecurityConfig {
   // The origin of the dashboard, for example https://gateway.example.com (scheme, host, optional port; no path). It is the
   // only Origin that the login and the session routes accept, and its scheme decides whether the cookie is Secure.
   publicOrigin: string;
+  // The first admin (decision 36). Both values or neither: the e-mail, and the file that holds the invite token.
+  bootstrap: { adminEmail: string; tokenFile: string } | undefined;
 }
 
 const securitySchema = z.object({
@@ -82,6 +84,8 @@ const securitySchema = z.object({
   SEED_FILE: z.string().min(1).optional(),
   ALLOWED_HOSTS: z.string().min(1),
   PUBLIC_ORIGIN: z.string().min(1),
+  BOOTSTRAP_ADMIN_EMAIL: z.string().min(1).optional(),
+  BOOTSTRAP_TOKEN_FILE: z.string().min(1).optional(),
 });
 
 // Returns the origin when the value is exactly an origin, and null otherwise.
@@ -108,7 +112,16 @@ export function loadSecurityConfig(env: NodeJS.ProcessEnv = process.env): Securi
   if (allowedHosts.length === 0) throw new ConfigError('invalid or missing configuration: ALLOWED_HOSTS');
   const publicOrigin = exactOrigin(parsed.data.PUBLIC_ORIGIN.trim());
   if (!publicOrigin) throw new ConfigError('invalid or missing configuration: PUBLIC_ORIGIN');
-  return { masterKeyFile: parsed.data.MASTER_KEY_FILE, masterKeyId: parsed.data.MASTER_KEY_ID, seedFile: parsed.data.SEED_FILE, allowedHosts, publicOrigin };
+  const { BOOTSTRAP_ADMIN_EMAIL: email, BOOTSTRAP_TOKEN_FILE: tokenFile } = parsed.data;
+  let bootstrap: SecurityConfig['bootstrap'];
+  if (email !== undefined || tokenFile !== undefined) {
+    const adminEmail = email?.trim().toLowerCase() ?? '';
+    if (!tokenFile || !/^[^\s@]+@[^\s@]+$/.test(adminEmail) || adminEmail.length > 254) {
+      throw new ConfigError('invalid or missing configuration: BOOTSTRAP_ADMIN_EMAIL, BOOTSTRAP_TOKEN_FILE (set both or neither)');
+    }
+    bootstrap = { adminEmail, tokenFile };
+  }
+  return { masterKeyFile: parsed.data.MASTER_KEY_FILE, masterKeyId: parsed.data.MASTER_KEY_ID, seedFile: parsed.data.SEED_FILE, allowedHosts, publicOrigin, bootstrap };
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {

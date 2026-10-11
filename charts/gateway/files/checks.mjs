@@ -15,7 +15,7 @@ function check(name, ok, detail = '') {
   if (!ok) failed = true;
 }
 
-const EXPECTED_TABLES = ['api_keys', 'applied_seeds', 'audit_log', 'schema_migrations', 'upstream_servers', 'upstream_tools', 'users'];
+const EXPECTED_TABLES = ['api_keys', 'applied_seeds', 'audit_log', 'login_throttle', 'schema_migrations', 'sessions', 'upstream_servers', 'upstream_tools', 'users'];
 
 async function http(path) {
   const response = await fetch(`${base}${path}`, { signal: AbortSignal.timeout(10_000) });
