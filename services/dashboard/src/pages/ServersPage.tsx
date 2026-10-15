@@ -87,7 +87,8 @@ export function ServersPage() {
   const [editing, setEditing] = useState<string | null>(null);
   const [confirming, setConfirming] = useState<string | null>(null);
   const [formFailure, setFormFailure] = useState<string | null>(null);
-  const [rowFailure, setRowFailure] = useState<string | null>(null);
+  // The message of the last failed toggle or removal, shown inside the row it came from.
+  const [rowFailure, setRowFailure] = useState<{ serverId: string; message: string } | null>(null);
 
   const list = servers.data ?? [];
   const toolsById = new Map((tools.data ?? []).map((entry) => [entry.serverId, entry]));
@@ -125,7 +126,7 @@ export function ServersPage() {
     try {
       await patch.mutateAsync({ id: server.id, patch: { enabled: !server.enabled } });
     } catch (error) {
-      setRowFailure(serversMessage(error, 'toggle'));
+      setRowFailure({ serverId: server.id, message: serversMessage(error, 'toggle') });
     } finally {
       patch.reset();
     }
@@ -137,7 +138,7 @@ export function ServersPage() {
     try {
       await remove.mutateAsync(id);
     } catch (error) {
-      setRowFailure(serversMessage(error, 'delete'));
+      setRowFailure({ serverId: id, message: serversMessage(error, 'delete') });
     }
   };
 
@@ -197,11 +198,6 @@ export function ServersPage() {
               </Button>
             </div>
             {servers.isRefetchError ? <p className={styles.note}>Could not refresh. The list below may be out of date.</p> : null}
-            {rowFailure ? (
-              <p className={styles.error} role="alert">
-                {rowFailure}
-              </p>
-            ) : null}
             {adding ? <ServerForm onCreate={onCreate} onCancel={() => setAdding(false)} failure={formFailure} /> : null}
             {list.length === 0 ? <p className={styles.note}>No upstream servers yet.</p> : null}
 
@@ -229,6 +225,11 @@ export function ServersPage() {
                         </>
                       ) : null}
                     </dl>
+                    {rowFailure && rowFailure.serverId === server.id ? (
+                      <p className={styles.error} role="alert">
+                        {rowFailure.message}
+                      </p>
+                    ) : null}
                     <ToolsBlock server={server} tools={toolsById.get(server.id)} now={now} failed={tools.isError && tools.data === undefined} />
 
                     {editing === server.id ? (

@@ -9,6 +9,7 @@ import { AuditPage } from './pages/AuditPage';
 import { KeysPage } from './pages/KeysPage';
 import { LoginPage } from './pages/LoginPage';
 import { ServersPage } from './pages/ServersPage';
+import { UsersPage } from './pages/UsersPage';
 
 // /login: for people without a session. /accept-invite is outside that guard on purpose: it does not ask the gateway
 // anything before the token has left the address bar (the loader), and an invite link opened by somebody who is signed in
@@ -23,7 +24,13 @@ export const appRoutes: RouteObject[] = [
       { path: '/', element: <AppHomePage /> },
       { path: '/keys', element: <KeysPage /> },
       { path: '/audit', element: <AuditPage /> },
-      { element: <RequireAdmin />, children: [{ path: '/servers', element: <ServersPage /> }] },
+      {
+        element: <RequireAdmin />,
+        children: [
+          { path: '/servers', element: <ServersPage /> },
+          { path: '/users', element: <UsersPage /> },
+        ],
+      },
     ],
   },
   { path: '*', element: <Navigate to="/" replace /> },

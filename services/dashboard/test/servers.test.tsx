@@ -356,6 +356,25 @@ describe('servers: disable, enable and remove', () => {
     expect(screen.getByText(/add it again by hand/)).toBeTruthy();
   });
 
+  test('a failure belongs to the row it came from: it is shown inside that row and not in the other', async () => {
+    const { user } = await open({
+      ...baseHandlers([srv(1), srv(2)]),
+      'PATCH /api/admin/servers/s-2': () => json(500, { error: 'x' }),
+    });
+    await user.click(await screen.findByRole('button', { name: 'Disable srv2' }));
+    const message = await screen.findByText('The server could not be changed right now. Try again in a moment.');
+    expect(card('srv2').contains(message)).toBe(true);
+    expect(card('srv1').contains(message)).toBe(false);
+  });
+
+  test('a failed removal is shown inside the row of the removed server', async () => {
+    const { user } = await open({ ...baseHandlers([srv(1), srv(2)]), 'DELETE /api/admin/servers/s-2': () => json(500, { error: 'x' }) });
+    await user.click(await screen.findByRole('button', { name: 'Remove srv2' }));
+    await user.click(screen.getByRole('button', { name: 'Confirm remove' }));
+    const message = await screen.findByText('The server could not be removed right now. Try again in a moment.');
+    expect(card('srv2').contains(message)).toBe(true);
+  });
+
   test('removing a server that is already gone (404) says so and refreshes the list', async () => {
     const { calls, user } = await open({ ...baseHandlers([srv(1)]), 'DELETE /api/admin/servers/s-1': () => json(404, { error: 'not found' }) });
     await user.click(await screen.findByRole('button', { name: 'Remove srv1' }));

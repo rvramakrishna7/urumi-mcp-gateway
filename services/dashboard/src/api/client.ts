@@ -338,3 +338,75 @@ export async function listServerTools(): Promise<ServerTools[]> {
   if (!answer || !Array.isArray(answer.servers) || !answer.servers.every(isServerTools)) throw new ApiError('server');
   return answer.servers;
 }
+
+export type UserStatus = 'invited' | 'active' | 'disabled';
+
+// One team member as the gateway shows them to an admin. No password, invite or key hash is ever in it.
+export interface AdminUser {
+  id: string;
+  email: string;
+  role: Role;
+  status: UserStatus;
+  createdAt: string;
+  lastLoginAt: string | null;
+}
+
+// An invite: the link carries the one-time token in its fragment. Only the link and the expiry are kept; both live in
+// component state for as long as the reveal panel is open.
+export interface Invite {
+  link: string;
+  expiresAt: string;
+}
+
+const isAdminUser = (value: unknown): value is AdminUser => {
+  if (typeof value !== 'object' || value === null) return false;
+  const user = value as Record<string, unknown>;
+  return (
+    typeof user.id === 'string' &&
+    typeof user.email === 'string' &&
+    (user.role === 'admin' || user.role === 'member') &&
+    (user.status === 'invited' || user.status === 'active' || user.status === 'disabled') &&
+    typeof user.createdAt === 'string' &&
+    isNullableString(user.lastLoginAt)
+  );
+};
+
+const isInvite = (value: unknown): value is Invite => {
+  if (typeof value !== 'object' || value === null) return false;
+  const invite = value as Record<string, unknown>;
+  return typeof invite.link === 'string' && typeof invite.expiresAt === 'string';
+};
+
+const inviteFrom = (answer: { invite?: unknown } | undefined): Invite => {
+  if (!answer || !isInvite(answer.invite)) throw new ApiError('server');
+  return { link: answer.invite.link, expiresAt: answer.invite.expiresAt };
+};
+
+export async function listUsers(): Promise<AdminUser[]> {
+  const answer = await request<{ users?: unknown }>('GET', '/api/admin/users');
+  if (!answer || !Array.isArray(answer.users) || !answer.users.every(isAdminUser)) throw new ApiError('server');
+  return answer.users;
+}
+
+// The gateway makes members only: the body has an email and nothing else.
+export async function inviteMember(email: string): Promise<Invite> {
+  return inviteFrom(await request<{ invite?: unknown }>('POST', '/api/admin/users', { email }));
+}
+
+export async function reinviteUser(id: string): Promise<Invite> {
+  return inviteFrom(await request<{ invite?: unknown }>('POST', `/api/admin/users/${encodeURIComponent(id)}/invite`));
+}
+
+export async function setUserStatus(id: string, status: 'active' | 'disabled'): Promise<void> {
+  await request('PATCH', `/api/admin/users/${encodeURIComponent(id)}`, { status });
+}
+
+export async function listUserKeys(id: string): Promise<ApiKey[]> {
+  const answer = await request<{ keys?: unknown }>('GET', `/api/admin/users/${encodeURIComponent(id)}/keys`);
+  if (!answer || !Array.isArray(answer.keys) || !answer.keys.every(isApiKey)) throw new ApiError('server');
+  return answer.keys;
+}
+
+export async function revokeUserKey(id: string, keyId: string): Promise<void> {
+  await request('DELETE', `/api/admin/users/${encodeURIComponent(id)}/keys/${encodeURIComponent(keyId)}`);
+}

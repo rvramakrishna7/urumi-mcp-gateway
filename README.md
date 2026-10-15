@@ -299,6 +299,8 @@ curl -s -X DELETE $API/<id>/keys/<keyId> -H "$ADMIN" -w '%{http_code}\n'      # 
 
 The admin actions (invite, disable, revoke) are written to the gateway log (ids only, never a token), not to the audit table, which holds tool calls.
 
+**Members in the dashboard.** An admin manages the team at `http://gateway.urumi.test/users` (the "Members" link on the home page; a member is sent back to the home page). Invite a person by email: they join as a **member** (the admin API makes members only, so there is no role field and no role change). The invite link is shown once, in a panel inside the page, and works once for 72 hours; whoever opens it sets the password. "New invite" on a member row issues a fresh link and doubles as a password reset; admins and disabled users have no such button (an admin's password is reset with the command-line tool). "Disable" signs the person out at once and stops their keys until they are enabled again. Your own row and the last active admin cannot be disabled (the screen blocks both, and the gateway answers 409 as well). "Keys" on a row lists that person's keys and lets an admin revoke one; an admin cannot create a key for someone else.
+
 ### 6. Read the audit log
 
 Every tool call has a row, written before the call and finished after it, whether it came from an external client (`via` is `mcp`) or (later) the chat agent (`via` is `chat`). The dashboard reads the rows through `GET /api/audit`. The route takes the **session cookie only** (an API key is 401), and the scope is applied in the SQL: an **admin** sees every row, a **member** sees only their own rows, and a member who sends `userId` gets 400. Arguments and results are never stored, so they cannot be returned.

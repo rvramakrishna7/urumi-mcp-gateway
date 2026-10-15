@@ -75,3 +75,28 @@ export function serversMessage(error: unknown, action: 'load' | 'create' | 'edit
   if (action === 'delete') return kind === 'notfound' ? gone : 'The server could not be removed right now. Try again in a moment.';
   return 'The servers could not be loaded right now. Try again in a moment.';
 }
+
+export function usersMessage(error: unknown, action: 'load' | 'invite' | 'reinvite' | 'status' | 'keys' | 'revoke'): string {
+  const kind = kindOf(error);
+  if (kind === 'network') return 'Cannot reach the server. Check your connection and try again.';
+  if (kind === 'forbidden') return 'Only an admin can manage members.';
+  const gone = 'That user or key is already gone. The list has been refreshed.';
+  if (action === 'invite') {
+    if (kind === 'limit') return 'A person with this email already has an account.';
+    if (kind === 'invalid') return 'Enter a valid email address.';
+    return 'The invite could not be created right now. Try again in a moment.';
+  }
+  if (action === 'reinvite') {
+    if (kind === 'limit') return 'This user cannot be invited again here. Admins and disabled users are not re-invited from the dashboard.';
+    if (kind === 'notfound') return gone;
+    return 'The invite could not be created right now. Try again in a moment.';
+  }
+  if (action === 'status') {
+    if (kind === 'limit') return 'That change is not allowed. You cannot disable yourself or the last active admin.';
+    if (kind === 'notfound') return gone;
+    return 'The user could not be changed right now. Try again in a moment.';
+  }
+  if (action === 'revoke') return kind === 'notfound' ? gone : 'The key could not be revoked right now. Try again in a moment.';
+  if (action === 'keys') return 'The keys of this user could not be loaded right now. Try again in a moment.';
+  return 'The members could not be loaded right now. Try again in a moment.';
+}

@@ -31,7 +31,7 @@ gateway:
 dashboard:
   image:
     repository: registry.example.com/urumi/dashboard
-    tag: "0.5.0"
+    tag: "0.6.1"
 
 # A real DNS record for this host must point at the VPS (decision 8). It is a placeholder here.
 ingress:
