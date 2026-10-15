@@ -57,7 +57,7 @@ async function errorFor(response: Response): Promise<ApiError> {
   return new ApiError('server');
 }
 
-export async function request<T>(method: 'GET' | 'POST' | 'DELETE', path: string, body?: unknown): Promise<T | undefined> {
+export async function request<T>(method: 'GET' | 'POST' | 'PATCH' | 'DELETE', path: string, body?: unknown): Promise<T | undefined> {
   let response: Response;
   try {
     response = await fetch(path, {
@@ -230,4 +230,111 @@ export async function listUserOptions(): Promise<UserOption[]> {
     if (typeof u?.id !== 'string' || typeof u.email !== 'string') throw new ApiError('server');
     return { id: u.id, email: u.email };
   });
+}
+
+export type ServerStatus = 'unknown' | 'connected' | 'unreachable';
+
+// One upstream MCP server as the gateway shows it to an admin. The credential value is never in it: only whether one is set.
+export interface UpstreamServer {
+  id: string;
+  slug: string;
+  name: string;
+  url: string;
+  enabled: boolean;
+  callTimeoutMs: number;
+  credential: { set: boolean; kind: 'bearer' | 'header' | null; header: string | null };
+  status: ServerStatus;
+  statusReason: string | null;
+  statusCheckedAt: string | null;
+  seedManaged: boolean;
+}
+
+// What the admin types. It goes out in a request body and is not kept anywhere else.
+export type CredentialInput = { kind: 'bearer'; value: string } | { kind: 'header'; header: string; value: string };
+
+export interface CreateServerInput {
+  slug: string;
+  name: string;
+  url: string;
+  callTimeoutMs: number;
+  credential?: CredentialInput;
+}
+
+// PATCH semantics of the gateway: a missing key keeps the value, and for credential null removes it.
+export interface PatchServerInput {
+  name?: string;
+  url?: string;
+  enabled?: boolean;
+  callTimeoutMs?: number;
+  credential?: CredentialInput | null;
+}
+
+const isUpstreamServer = (value: unknown): value is UpstreamServer => {
+  if (typeof value !== 'object' || value === null) return false;
+  const server = value as Record<string, unknown>;
+  const credential = server.credential as Record<string, unknown> | null | undefined;
+  return (
+    typeof server.id === 'string' &&
+    typeof server.slug === 'string' &&
+    typeof server.name === 'string' &&
+    typeof server.url === 'string' &&
+    typeof server.enabled === 'boolean' &&
+    typeof server.callTimeoutMs === 'number' &&
+    typeof credential === 'object' &&
+    credential !== null &&
+    typeof credential.set === 'boolean' &&
+    (credential.kind === null || credential.kind === 'bearer' || credential.kind === 'header') &&
+    isNullableString(credential.header) &&
+    (server.status === 'unknown' || server.status === 'connected' || server.status === 'unreachable') &&
+    isNullableString(server.statusReason) &&
+    isNullableString(server.statusCheckedAt) &&
+    typeof server.seedManaged === 'boolean'
+  );
+};
+
+export async function listServers(): Promise<UpstreamServer[]> {
+  const answer = await request<{ servers?: unknown }>('GET', '/api/admin/servers');
+  if (!answer || !Array.isArray(answer.servers) || !answer.servers.every(isUpstreamServer)) throw new ApiError('server');
+  return answer.servers;
+}
+
+export async function createServer(input: CreateServerInput): Promise<void> {
+  await request('POST', '/api/admin/servers', input);
+}
+
+export async function patchServer(id: string, patch: PatchServerInput): Promise<void> {
+  await request('PATCH', `/api/admin/servers/${encodeURIComponent(id)}`, patch);
+}
+
+export async function deleteServer(id: string): Promise<void> {
+  await request('DELETE', `/api/admin/servers/${encodeURIComponent(id)}`);
+}
+
+// The cached tool names of one server (the gateway reads its own cache; no upstream is called for this answer).
+export interface ServerTools {
+  serverId: string;
+  tools: Array<{ name: string; exposedName: string }>;
+  skipped: Array<{ name: string; reason: string }>;
+  fetchedAt: string | null;
+}
+
+const isServerTools = (value: unknown): value is ServerTools => {
+  if (typeof value !== 'object' || value === null) return false;
+  const entry = value as Record<string, unknown>;
+  const named = (item: unknown, second: string) =>
+    typeof item === 'object' && item !== null && typeof (item as Record<string, unknown>).name === 'string' && typeof (item as Record<string, unknown>)[second] === 'string';
+  return (
+    typeof entry.serverId === 'string' &&
+    Array.isArray(entry.tools) &&
+    entry.tools.every((tool) => named(tool, 'exposedName')) &&
+    Array.isArray(entry.skipped) &&
+    entry.skipped.every((tool) => named(tool, 'reason')) &&
+    isNullableString(entry.fetchedAt)
+  );
+};
+
+export async function listServerTools(): Promise<ServerTools[]> {
+  const answer = await request<{ servers?: unknown }>('GET', '/api/admin/tools');
+  if (!answer || !Array.isArray(answer.servers) || !answer.servers.every(isServerTools)) throw new ApiError('server');
+  return answer.servers;
 }

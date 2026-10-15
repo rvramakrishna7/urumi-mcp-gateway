@@ -2,7 +2,7 @@
 
 This document records the approved architecture decisions for the team MCP gateway. It is the source of truth for design. If a decision is not written here, it has not been made.
 
-Status: decisions 1 to 39 approved; 39 (the cached tool names for the servers screen, Step 13f) is implemented in the code and not yet deployed; 38 (the audit API, Step 12) is implemented and checked. Decisions 24 to 34 are implemented and checked (8a to 8f); the review, merge and the final check of 8f remain. Decisions 16 to 23 (the woo-mcp server, Step 7) were checked on the local cluster. Two decisions are still open and are listed at the end.
+Status: decisions 1 to 39 approved; 39 (the cached tool names for the servers screen, Step 13f) is implemented, deployed and checked; 38 (the audit API, Step 12) is implemented and checked. Decisions 24 to 34 are implemented and checked (8a to 8f); the review, merge and the final check of 8f remain. Decisions 16 to 23 (the woo-mcp server, Step 7) were checked on the local cluster. Two decisions are still open and are listed at the end.
 
 ## Overview
 
@@ -528,7 +528,7 @@ A per-IP limit is only useful if the gateway sees the real client address, so it
 - **Tests:** 351 with `npm run test:db` (101 with `npm test`): 14 for the query (the migration on a database that already holds audit rows, the scope, keyset with rows arriving between two pages, the planner evidence) and 42 for the route (401 with no credentials and with an API key, with or without a cookie; a disabled user; scope; every bad parameter; a leak scan with 6 or more needles and a planted control). **Two mutation checks:** removing the member scope in `queryAudit` failed 4 tests; making the route use the admin scope for a member failed 2.
 - **Cluster proof (12c):** `helm upgrade` with the README command, `helm test` Succeeded, the migrations recorded include `0004_audit_user_id_index`. 32 checks passed and 0 failed with three throwaway users (`proof-h-admin-*`, `proof-h-m1-*`, `proof-h-m2-*`): real `/mcp` calls (`woo__list_orders`, `woo__list_products`, an unknown tool), then a member saw exactly their own 4 rows, the other member exactly 1, a member with `userId` got 400, the admin saw all 25 rows (19 older ones included) and walked them with `limit=5` in 5 pages without a repeat, an API key on `/api/audit` was 401, and a leak scan with 12 needles (passwords, invite tokens, API keys, session cookies) and a planted control found nothing in 25 answers and 59 log lines. The proof keys were revoked and the two members disabled; the throwaway admin is still active (an admin cannot disable himself).
 
-### 39. The cached tool names for the servers screen (implemented, Step 13f)
+### 39. The cached tool names for the servers screen (implemented and checked, Step 13f)
 
 The brief asks the servers screen to show the tools each upstream exposes. The registry API returned no tools (they were read only by `tools/list`, which needs an API key and not a session), so `GET /api/admin/tools` is added. It is read only and additive: `GET /api/admin/servers` and its response are unchanged.
 
@@ -537,7 +537,8 @@ The brief asks the servers screen to show the tools each upstream exposes. The r
 - **No migration and no upstream call.** One `SELECT` over `upstream_servers LEFT JOIN upstream_tools`. It reads the cache that the poller writes every 15 seconds (decision 28).
 - **Names only.** Descriptions, input schemas, annotations and hashes are text from the upstream (decision 29) and are never returned here. The names of skipped tools are the ones `sanitize.ts` marks as safe to show.
 - **The cache outlives the state of the server.** A server that is disabled or turns unreachable keeps its last stored list. The caller reads the state from `GET /api/admin/servers` and must present the names as the last known tools in that case.
-- **Implemented (image `gateway:0.8.0`).** `listToolNamesByServer` in `src/upstream/tools-repository.ts`, the route in `src/routes/admin.ts`, `test/admin-tools.test.ts` (4 tests: 401 and 403, content and order, a disabled server keeps its names, a leak check with a planted description marker and a positive control). 355 tests with `npm run test:db`. One mutation check (skipped tools shown as exposed) failed 1 test. The cluster has not been upgraded yet.
+- **Implemented (image `gateway:0.8.0`).** `listToolNamesByServer` in `src/upstream/tools-repository.ts`, the route in `src/routes/admin.ts`, `test/admin-tools.test.ts` (4 tests: 401 and 403, content and order, a disabled server keeps its names, a leak check with a planted description marker and a positive control). 355 tests with `npm run test:db`. One mutation check (skipped tools shown as exposed) failed 1 test.
+- **Deployed (chart revision 18, images `gateway:0.8.0` and `dashboard:0.5.0`).** Both pods Ready with 0 restarts; `/api/admin/tools` without a session is 401. Checked in the browser as admin on the servers screen: `woo` Connected with its 5 tool names; a server added without its credential showed Unreachable with the reason `http_401`; a server at an address with nothing listening showed Unreachable with the reason `unreachable` within about 15 seconds; with `deployment/woo-mcp` scaled to 0 the screen showed Unreachable within about 10 seconds and Connected again within about 10 seconds after it was scaled back to 1 (TEST-014 and TEST-015). The warning for removing a server that the install registered was shown and the removal was cancelled. The two test servers were removed.
 
 ## Known limitations
 

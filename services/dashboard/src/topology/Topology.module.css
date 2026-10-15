@@ -151,3 +151,15 @@
     animation: none;
   }
 }
+
+/* Unknown: the gateway has not probed this server yet. Muted, dotted, and no packet until it is known. */
+.unknown .line {
+  stroke-dasharray: 2 6;
+}
+.unknown .packet {
+  visibility: hidden;
+  animation: none;
+}
+.unknown .state {
+  fill: var(--muted);
+}

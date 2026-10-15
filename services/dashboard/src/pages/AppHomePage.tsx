@@ -51,6 +51,11 @@ export function AppHomePage() {
         <Link to="/audit" className={styles.link}>
           Audit log
         </Link>
+        {user?.role === 'admin' ? (
+          <Link to="/servers" className={styles.link}>
+            Servers
+          </Link>
+        ) : null}
         <Button variant="ghost" onClick={onSignOut} disabled={logout.isPending}>
           Sign out
         </Button>

@@ -54,3 +54,24 @@ export function auditMessage(error: unknown): string {
   if (kindOf(error) === 'network') return 'Cannot reach the server. Check your connection and try again.';
   return 'The audit log could not be loaded right now. Try again in a moment.';
 }
+
+export function serversMessage(error: unknown, action: 'load' | 'create' | 'edit' | 'toggle' | 'delete'): string {
+  const kind = kindOf(error);
+  if (kind === 'network') return 'Cannot reach the server. Check your connection and try again.';
+  if (kind === 'forbidden') return 'Only an admin can manage servers.';
+  const gone = 'That server is already gone. The list has been refreshed.';
+  const rejected = 'The gateway did not accept these values. Check the name, address, timeout and credential.';
+  if (action === 'create') {
+    if (kind === 'limit') return 'A server with this name already exists. Choose another name.';
+    if (kind === 'invalid') return rejected;
+    return 'The server could not be added right now. Try again in a moment.';
+  }
+  if (action === 'edit') {
+    if (kind === 'notfound') return gone;
+    if (kind === 'invalid') return rejected;
+    return 'The server could not be saved right now. Try again in a moment.';
+  }
+  if (action === 'toggle') return kind === 'notfound' ? gone : 'The server could not be changed right now. Try again in a moment.';
+  if (action === 'delete') return kind === 'notfound' ? gone : 'The server could not be removed right now. Try again in a moment.';
+  return 'The servers could not be loaded right now. Try again in a moment.';
+}

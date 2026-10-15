@@ -1,6 +1,7 @@
 import styles from './Topology.module.css';
 
-export type UpstreamState = 'connected' | 'unreachable' | 'disabled';
+// unknown: the gateway has not probed the server yet (a new server).
+export type UpstreamState = 'connected' | 'unreachable' | 'disabled' | 'unknown';
 
 export interface TopologyServer {
   id: string;
@@ -18,6 +19,7 @@ const STATE_TEXT: Record<UpstreamState, string> = {
   connected: 'connected',
   unreachable: 'unreachable',
   disabled: 'disabled',
+  unknown: 'checking',
 };
 
 const WIDTH = 640;
