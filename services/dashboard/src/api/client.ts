@@ -5,6 +5,8 @@ export type ApiErrorKind =
   | 'unauthorized' // 401: no session, or wrong credentials
   | 'throttled' // 429
   | 'forbidden' // 403
+  | 'notfound' // 404: the thing is not there, or is not yours (the gateway does not tell the two apart)
+  | 'limit' // 409: a limit of the gateway is reached (the 10 active keys of a user)
   | 'invalid' // 400: bad request, or an invite that is wrong, expired or used
   | 'weak' // 400 from accept-invite: the password is not allowed
   | 'server' // 5xx, or an answer that is not what the contract says
@@ -43,6 +45,8 @@ async function errorFor(response: Response): Promise<ApiError> {
   const { status } = response;
   if (status === 401) return new ApiError('unauthorized');
   if (status === 403) return new ApiError('forbidden');
+  if (status === 404) return new ApiError('notfound');
+  if (status === 409) return new ApiError('limit');
   if (status === 429) return new ApiError('throttled', parseRetryAfter(response.headers.get('Retry-After')));
   if (status === 400) {
     // Only the fixed marker of the gateway is read, and only to tell two kinds of 400 apart. The reason text is dropped.
@@ -53,7 +57,7 @@ async function errorFor(response: Response): Promise<ApiError> {
   return new ApiError('server');
 }
 
-export async function request<T>(method: 'GET' | 'POST', path: string, body?: unknown): Promise<T | undefined> {
+export async function request<T>(method: 'GET' | 'POST' | 'DELETE', path: string, body?: unknown): Promise<T | undefined> {
   let response: Response;
   try {
     response = await fetch(path, {
@@ -107,4 +111,48 @@ export async function logout(): Promise<void> {
     // No session left on the server is the state that a logout wants.
     if (!(error instanceof ApiError && error.kind === 'unauthorized')) throw error;
   }
+}
+
+// One API key of the signed-in user. The gateway sends the first characters of the key (keyPrefix) and never the hash.
+export interface ApiKey {
+  id: string;
+  name: string;
+  keyPrefix: string;
+  createdAt: string;
+  lastUsedAt: string | null;
+  revokedAt: string | null;
+  status: 'active' | 'revoked';
+}
+
+const isNullableString = (value: unknown): value is string | null => value === null || typeof value === 'string';
+
+const isApiKey = (value: unknown): value is ApiKey => {
+  if (typeof value !== 'object' || value === null) return false;
+  const key = value as Record<string, unknown>;
+  return (
+    typeof key.id === 'string' &&
+    typeof key.name === 'string' &&
+    typeof key.keyPrefix === 'string' &&
+    typeof key.createdAt === 'string' &&
+    isNullableString(key.lastUsedAt) &&
+    isNullableString(key.revokedAt) &&
+    (key.status === 'active' || key.status === 'revoked')
+  );
+};
+
+export async function listKeys(): Promise<ApiKey[]> {
+  const answer = await request<{ keys?: unknown }>('GET', '/api/me/keys');
+  if (!answer || !Array.isArray(answer.keys) || !answer.keys.every(isApiKey)) throw new ApiError('server');
+  return answer.keys;
+}
+
+// The plain key is in this one answer and nowhere else. The caller keeps it in component state only.
+export async function createKey(name: string): Promise<{ key: string; meta: ApiKey }> {
+  const answer = await request<{ key?: unknown; meta?: unknown }>('POST', '/api/me/keys', { name });
+  if (!answer || typeof answer.key !== 'string' || !isApiKey(answer.meta)) throw new ApiError('server');
+  return { key: answer.key, meta: answer.meta };
+}
+
+export async function revokeKey(id: string): Promise<void> {
+  await request('DELETE', `/api/me/keys/${encodeURIComponent(id)}`);
 }

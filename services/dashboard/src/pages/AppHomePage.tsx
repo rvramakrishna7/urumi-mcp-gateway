@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useNavigate } from 'react-router';
+import { Link, useNavigate } from 'react-router';
 import { useLogout, useSession } from '../auth/session';
 import { Brand } from '../ui/Brand';
 import { Button } from '../ui/Button';
@@ -45,6 +45,9 @@ export function AppHomePage() {
             Could not sign out. Try again.
           </p>
         ) : null}
+        <Link to="/keys" className={styles.link}>
+          API keys
+        </Link>
         <Button variant="ghost" onClick={onSignOut} disabled={logout.isPending}>
           Sign out
         </Button>

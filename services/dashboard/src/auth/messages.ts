@@ -34,3 +34,18 @@ export function inviteMessage(error: unknown): string {
 
 // The length of a password the way the gateway counts it: in characters, not in UTF-16 units.
 export const passwordLength = (password: string): number => [...password].length;
+
+export function keysMessage(error: unknown, action: 'load' | 'create' | 'revoke'): string {
+  const kind = kindOf(error);
+  if (kind === 'network') return 'Cannot reach the server. Check your connection and try again.';
+  if (action === 'create') {
+    if (kind === 'limit') return 'You have 10 active keys. Revoke one to create another.';
+    if (kind === 'invalid') return 'Enter a name of 1 to 100 characters.';
+    return 'The key could not be created right now. Try again in a moment.';
+  }
+  if (action === 'revoke') {
+    if (kind === 'notfound') return 'That key is already gone. The list has been refreshed.';
+    return 'The key could not be revoked right now. Try again in a moment.';
+  }
+  return 'Your keys could not be loaded right now. Try again in a moment.';
+}

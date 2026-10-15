@@ -578,6 +578,7 @@ A per-IP limit is only useful if the gateway sees the real client address, so it
 - Gateway, only the cluster drill with the real woo-mcp was run in the cluster. The slow, dead, oversized and colliding upstreams were exercised with fakes in tests, not deployed.
 - Gateway, the master key is kept on `helm uninstall` and is stored base64 encoded in the Helm release metadata, like `gateway-db`. Key rotation (a second key id and a re-encrypt command) is designed in the keyring but there is no command for it yet. If the key is lost the credentials cannot be read and an admin enters them again.
 - Gateway, the admin API has no audit of its own changes beyond a log line with the user and the field names.
+- Dashboard, the "Copy key" button of the API keys screen does not work over plain `http`: the browser exposes `navigator.clipboard` only in a secure context (https or localhost), and the local cluster is served on `http://gateway.urumi.test`. The screen then shows its fallback ("Copy did not work here. Select the key above and press Ctrl+C."), which was seen in the browser proof of Step 13d. The key can still be selected and copied by hand. TLS at the Ingress (Step 20) removes the limitation; nothing is changed in the code for it.
 
 ## Credential domains
 

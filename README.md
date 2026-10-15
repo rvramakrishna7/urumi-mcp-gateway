@@ -215,6 +215,8 @@ kubectl exec -n gateway deploy/gateway -c gateway -- node dist/cli.js user invit
 
 The new owner of the account sets the password with the accept-invite command above, with `invite.token` in place of `bootstrap.token`; delete `invite.token` afterwards.
 
+**API keys in the dashboard.** Any signed-in user, admin or member, manages their own keys at `http://gateway.urumi.test/keys` (the "API keys" link on the home page): create a key with a name, copy it from the one-time reveal (it is shown once and cannot be shown again; only its first characters are listed afterwards), and revoke it. A user can have 10 active keys; revoked keys stay in the list, marked as revoked. An MCP client uses a key at `/mcp` with the header `Authorization: Bearer <key>`. Over plain `http` (the local cluster) the "Copy key" button cannot reach the clipboard, so the screen asks you to select the key and press Ctrl+C (known limitation, fixed by TLS in Step 20).
+
 **API keys.** A signed-in user makes and revokes their own keys through `/api/me/keys` (session only, for the dashboard). For the commands in the sections below you need two key files, `admin.key` and `member.key`. The command-line tool makes a key for a user who is active; the new key is the only thing on stdout, so redirect it to a file (it is not printed) and keep the file private. The admin is active after the step above. The member is made first, with the CLI (active at once, no password; for a real member use the invite of section 5 instead):
 
 ```bash

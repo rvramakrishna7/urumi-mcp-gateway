@@ -5,6 +5,7 @@ import { RouterProvider } from 'react-router/dom';
 import { PublicOnly, RequireAuth } from './auth/guards';
 import { AcceptInvitePage, acceptInviteLoader } from './pages/AcceptInvitePage';
 import { AppHomePage } from './pages/AppHomePage';
+import { KeysPage } from './pages/KeysPage';
 import { LoginPage } from './pages/LoginPage';
 
 // /login: for people without a session. /accept-invite is outside that guard on purpose: it does not ask the gateway
@@ -14,7 +15,13 @@ import { LoginPage } from './pages/LoginPage';
 export const appRoutes: RouteObject[] = [
   { element: <PublicOnly />, children: [{ path: '/login', element: <LoginPage /> }] },
   { path: '/accept-invite', loader: acceptInviteLoader, element: <AcceptInvitePage /> },
-  { element: <RequireAuth />, children: [{ path: '/', element: <AppHomePage /> }] },
+  {
+    element: <RequireAuth />,
+    children: [
+      { path: '/', element: <AppHomePage /> },
+      { path: '/keys', element: <KeysPage /> },
+    ],
+  },
   { path: '*', element: <Navigate to="/" replace /> },
 ];
 
