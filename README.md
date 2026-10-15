@@ -176,8 +176,8 @@ The gateway keeps the list of upstream MCP servers, offers one public MCP endpoi
 ### 1. Build the image and install the chart
 
 ```bash
-docker build -t gateway:0.7.0 services/gateway
-k3d image import gateway:0.7.0 -c urumi
+docker build -t gateway:0.8.0 services/gateway
+k3d image import gateway:0.8.0 -c urumi
 
 helm upgrade --install gateway charts/gateway \
   --namespace gateway --create-namespace \

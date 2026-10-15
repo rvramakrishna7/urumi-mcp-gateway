@@ -6,6 +6,7 @@ import type { Logger } from '../logger.ts';
 import { authenticate, authenticateKeyOrSession, identityOf, requireAdmin } from '../auth/middleware.ts';
 import type { SessionAuthConfig } from '../auth/session.ts';
 import { deleteServer, getServer, insertServer, listServers, patchServer, RegistryError } from '../registry/repository.ts';
+import { listToolNamesByServer } from '../upstream/tools-repository.ts';
 import { createAdminUsersRouter } from './admin-users.ts';
 import { createServerSchema, describeIssues, patchServerSchema } from '../registry/validation.ts';
 
@@ -56,6 +57,15 @@ export function createAdminRouter({ db, keyring, logger, now, sessions, onServer
   router.get('/servers', async (_req, res) => {
     try {
       res.json({ servers: await listServers(db) });
+    } catch (error) {
+      fail(res, error, logger);
+    }
+  });
+
+  // The cached tool names of every server (read only, no call to an upstream).
+  router.get('/tools', async (_req, res) => {
+    try {
+      res.json({ servers: await listToolNamesByServer(db) });
     } catch (error) {
       fail(res, error, logger);
     }
