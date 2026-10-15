@@ -49,3 +49,8 @@ export function keysMessage(error: unknown, action: 'load' | 'create' | 'revoke'
   }
   return 'Your keys could not be loaded right now. Try again in a moment.';
 }
+
+export function auditMessage(error: unknown): string {
+  if (kindOf(error) === 'network') return 'Cannot reach the server. Check your connection and try again.';
+  return 'The audit log could not be loaded right now. Try again in a moment.';
+}

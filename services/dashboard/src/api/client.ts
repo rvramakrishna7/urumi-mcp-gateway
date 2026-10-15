@@ -156,3 +156,78 @@ export async function createKey(name: string): Promise<{ key: string; meta: ApiK
 export async function revokeKey(id: string): Promise<void> {
   await request('DELETE', `/api/me/keys/${encodeURIComponent(id)}`);
 }
+
+export const AUDIT_OUTCOMES = ['ok', 'error', 'timeout', 'unreachable', 'unknown_tool', 'denied', 'interrupted', 'started'] as const;
+export type AuditOutcome = (typeof AUDIT_OUTCOMES)[number];
+
+// One tool call as the gateway records it. There are no arguments and no results in it, and error text of an upstream never.
+export interface AuditItem {
+  id: number;
+  ts: string;
+  finishedAt: string | null;
+  userEmail: string;
+  serverSlug: string | null;
+  tool: string | null;
+  requestedName: string;
+  outcome: AuditOutcome;
+  errorKind: string | null;
+  durationMs: number | null;
+  via: 'mcp' | 'chat';
+}
+
+export interface AuditPage {
+  items: AuditItem[];
+  nextCursor: string | null;
+}
+
+export interface AuditFilter {
+  outcomes: AuditOutcome[];
+  server: string;
+  userId: string;
+}
+
+const isAuditItem = (value: unknown): value is AuditItem => {
+  if (typeof value !== 'object' || value === null) return false;
+  const item = value as Record<string, unknown>;
+  return (
+    typeof item.id === 'number' &&
+    typeof item.ts === 'string' &&
+    isNullableString(item.finishedAt) &&
+    typeof item.userEmail === 'string' &&
+    isNullableString(item.serverSlug) &&
+    isNullableString(item.tool) &&
+    typeof item.requestedName === 'string' &&
+    (AUDIT_OUTCOMES as readonly unknown[]).includes(item.outcome) &&
+    isNullableString(item.errorKind) &&
+    (item.durationMs === null || typeof item.durationMs === 'number') &&
+    (item.via === 'mcp' || item.via === 'chat')
+  );
+};
+
+export async function listAudit(filter: AuditFilter, cursor: string | null): Promise<AuditPage> {
+  const params = new URLSearchParams();
+  for (const outcome of filter.outcomes) params.append('outcome', outcome);
+  if (filter.server !== '') params.set('server', filter.server);
+  if (filter.userId !== '') params.set('userId', filter.userId);
+  if (cursor !== null) params.set('cursor', cursor);
+  const query = params.toString();
+  const answer = await request<{ items?: unknown; nextCursor?: unknown }>('GET', query === '' ? '/api/audit' : `/api/audit?${query}`);
+  if (!answer || !Array.isArray(answer.items) || !answer.items.every(isAuditItem) || !isNullableString(answer.nextCursor)) throw new ApiError('server');
+  return { items: answer.items, nextCursor: answer.nextCursor };
+}
+
+export interface UserOption {
+  id: string;
+  email: string;
+}
+
+// For the admin's user filter only. The route is admin only; the gateway refuses it to a member.
+export async function listUserOptions(): Promise<UserOption[]> {
+  const answer = await request<{ users?: unknown }>('GET', '/api/admin/users');
+  if (!answer || !Array.isArray(answer.users)) throw new ApiError('server');
+  return answer.users.map((user: unknown) => {
+    const u = user as Record<string, unknown>;
+    if (typeof u?.id !== 'string' || typeof u.email !== 'string') throw new ApiError('server');
+    return { id: u.id, email: u.email };
+  });
+}

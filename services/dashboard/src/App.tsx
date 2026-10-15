@@ -5,6 +5,7 @@ import { RouterProvider } from 'react-router/dom';
 import { PublicOnly, RequireAuth } from './auth/guards';
 import { AcceptInvitePage, acceptInviteLoader } from './pages/AcceptInvitePage';
 import { AppHomePage } from './pages/AppHomePage';
+import { AuditPage } from './pages/AuditPage';
 import { KeysPage } from './pages/KeysPage';
 import { LoginPage } from './pages/LoginPage';
 
@@ -20,6 +21,7 @@ export const appRoutes: RouteObject[] = [
     children: [
       { path: '/', element: <AppHomePage /> },
       { path: '/keys', element: <KeysPage /> },
+      { path: '/audit', element: <AuditPage /> },
     ],
   },
   { path: '*', element: <Navigate to="/" replace /> },

@@ -48,6 +48,9 @@ export function AppHomePage() {
         <Link to="/keys" className={styles.link}>
           API keys
         </Link>
+        <Link to="/audit" className={styles.link}>
+          Audit log
+        </Link>
         <Button variant="ghost" onClick={onSignOut} disabled={logout.isPending}>
           Sign out
         </Button>
