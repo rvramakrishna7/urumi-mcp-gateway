@@ -99,12 +99,16 @@
   margin-top: var(--space-5);
 }
 
-.note {
-  margin-top: var(--space-5);
-  font-family: var(--font-mono);
-  font-size: var(--text-xs);
-  letter-spacing: 0.04em;
+.formNote {
+  font-size: var(--text-sm);
   color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+.formError {
+  font-size: var(--text-sm);
+  color: var(--bad);
+  overflow-wrap: anywhere;
 }
 
 /*

@@ -1,13 +1,24 @@
+import { useState } from 'react';
 import { createBrowserRouter, Navigate } from 'react-router';
+import type { RouteObject } from 'react-router';
 import { RouterProvider } from 'react-router/dom';
+import { PublicOnly, RequireAuth } from './auth/guards';
+import { AcceptInvitePage, acceptInviteLoader } from './pages/AcceptInvitePage';
+import { AppHomePage } from './pages/AppHomePage';
 import { LoginPage } from './pages/LoginPage';
 
-// 13a: only the login screen exists. The other routes, the guards and the session come with the next sub-steps.
-const router = createBrowserRouter([
-  { path: '/login', element: <LoginPage /> },
-  { path: '*', element: <Navigate to="/login" replace /> },
-]);
+// /login: for people without a session. /accept-invite is outside that guard on purpose: it does not ask the gateway
+// anything before the token has left the address bar (the loader), and an invite link opened by somebody who is signed in
+// simply replaces their session with the invited person's. Everything else needs a session. Admin-only screens will sit
+// inside RequireAdmin when they exist.
+export const appRoutes: RouteObject[] = [
+  { element: <PublicOnly />, children: [{ path: '/login', element: <LoginPage /> }] },
+  { path: '/accept-invite', loader: acceptInviteLoader, element: <AcceptInvitePage /> },
+  { element: <RequireAuth />, children: [{ path: '/', element: <AppHomePage /> }] },
+  { path: '*', element: <Navigate to="/" replace /> },
+];
 
 export function App() {
+  const [router] = useState(() => createBrowserRouter(appRoutes));
   return <RouterProvider router={router} />;
 }

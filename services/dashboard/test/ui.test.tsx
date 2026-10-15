@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { cleanup, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { LoginPage } from '../src/pages/LoginPage';
 import { ThemeProvider } from '../src/theme/ThemeProvider';
 import { Topology } from '../src/topology/Topology';
@@ -125,12 +126,14 @@ describe('topology: the state is written, not only coloured', () => {
   });
 });
 
-describe('login screen (13a, static)', () => {
+describe('login screen (layout and accessibility)', () => {
   const renderLogin = () =>
     render(
-      <ThemeProvider>
-        <LoginPage />
-      </ThemeProvider>,
+      <QueryClientProvider client={new QueryClient()}>
+        <ThemeProvider>
+          <LoginPage />
+        </ThemeProvider>
+      </QueryClientProvider>,
     );
 
   test('one h1, the two fields with labels, and the sign-in button', () => {
@@ -139,14 +142,6 @@ describe('login screen (13a, static)', () => {
     expect((screen.getByLabelText('Email') as HTMLInputElement).autocomplete).toBe('username');
     expect((screen.getByLabelText('Password') as HTMLInputElement).type).toBe('password');
     expect(screen.getByRole('button', { name: 'Sign in' })).toBeTruthy();
-  });
-
-  test('submitting does not call the network yet', () => {
-    const fetchSpy = vi.fn();
-    vi.stubGlobal('fetch', fetchSpy);
-    renderLogin();
-    fireEvent.submit(screen.getByRole('button', { name: 'Sign in' }).closest('form') as HTMLFormElement);
-    expect(fetchSpy).not.toHaveBeenCalled();
   });
 
   test('the backdrop is decoration: hidden from assistive technology, with no text, no server name and no status', () => {
