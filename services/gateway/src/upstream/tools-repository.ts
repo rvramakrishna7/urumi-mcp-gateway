@@ -55,3 +55,38 @@ export async function markConnectedByCall(db: Queryable, serverId: string): Prom
     [serverId],
   );
 }
+
+export interface ServerToolNames {
+  serverId: string;
+  slug: string;
+  // The name as the upstream calls it, and as a client sees it (<slug>__<name>, decision 5).
+  tools: Array<{ name: string; exposedName: string }>;
+  skipped: Array<{ name: string; reason: string }>;
+  // When the poller last stored the list. Null when the server was never probed successfully.
+  fetchedAt: Date | null;
+}
+
+// The cached tool names of every server, for the admin screen. Names only: a description or a schema is text from the
+// upstream and is not needed here. A server with no cached tools is still listed, with empty lists. The cache is kept
+// when a server turns unreachable or is disabled, so the caller reads the status of the server from the registry.
+export async function listToolNamesByServer(db: Queryable): Promise<ServerToolNames[]> {
+  const result = await db.query(
+    `SELECT s.id, s.slug, t.name, t.skipped_reason, t.fetched_at
+     FROM upstream_servers s LEFT JOIN upstream_tools t ON t.server_id = s.id
+     ORDER BY s.slug, t.name`,
+  );
+  const byServer = new Map<string, ServerToolNames>();
+  for (const row of result.rows) {
+    let entry = byServer.get(row.id as string);
+    if (!entry) {
+      entry = { serverId: row.id as string, slug: row.slug as string, tools: [], skipped: [], fetchedAt: null };
+      byServer.set(entry.serverId, entry);
+    }
+    if (row.name === null) continue;
+    if (row.skipped_reason === null) entry.tools.push({ name: row.name as string, exposedName: `${row.slug}__${row.name}` });
+    else entry.skipped.push({ name: row.name as string, reason: row.skipped_reason as string });
+    const fetchedAt = row.fetched_at as Date;
+    if (entry.fetchedAt === null || fetchedAt > entry.fetchedAt) entry.fetchedAt = fetchedAt;
+  }
+  return [...byServer.values()];
+}

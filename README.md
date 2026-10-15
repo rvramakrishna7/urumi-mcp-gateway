@@ -176,8 +176,8 @@ The gateway keeps the list of upstream MCP servers, offers one public MCP endpoi
 ### 1. Build the image and install the chart
 
 ```bash
-docker build -t gateway:0.7.0 services/gateway
-k3d image import gateway:0.7.0 -c urumi
+docker build -t gateway:0.8.0 services/gateway
+k3d image import gateway:0.8.0 -c urumi
 
 helm upgrade --install gateway charts/gateway \
   --namespace gateway --create-namespace \
@@ -214,6 +214,8 @@ kubectl exec -n gateway deploy/gateway -c gateway -- node dist/cli.js user invit
 ```
 
 The new owner of the account sets the password with the accept-invite command above, with `invite.token` in place of `bootstrap.token`; delete `invite.token` afterwards.
+
+**API keys in the dashboard.** Any signed-in user, admin or member, manages their own keys at `http://gateway.urumi.test/keys` (the "API keys" link on the home page): create a key with a name, copy it from the one-time reveal (it is shown once and cannot be shown again; only its first characters are listed afterwards), and revoke it. A user can have 10 active keys; revoked keys stay in the list, marked as revoked. An MCP client uses a key at `/mcp` with the header `Authorization: Bearer <key>`. Over plain `http` (the local cluster) the "Copy key" button cannot reach the clipboard, so the screen asks you to select the key and press Ctrl+C (known limitation, fixed by TLS in Step 20).
 
 **API keys.** A signed-in user makes and revokes their own keys through `/api/me/keys` (session only, for the dashboard). For the commands in the sections below you need two key files, `admin.key` and `member.key`. The command-line tool makes a key for a user who is active; the new key is the only thing on stdout, so redirect it to a file (it is not printed) and keep the file private. The admin is active after the step above. The member is made first, with the CLI (active at once, no password; for a real member use the invite of section 5 instead):
 
@@ -296,6 +298,8 @@ curl -s -X DELETE $API/<id>/keys/<keyId> -H "$ADMIN" -w '%{http_code}\n'      # 
 ```
 
 The admin actions (invite, disable, revoke) are written to the gateway log (ids only, never a token), not to the audit table, which holds tool calls.
+
+**Members in the dashboard.** An admin manages the team at `http://gateway.urumi.test/users` (the "Members" link on the home page; a member is sent back to the home page). Invite a person by email: they join as a **member** (the admin API makes members only, so there is no role field and no role change). The invite link is shown once, in a panel inside the page, and works once for 72 hours; whoever opens it sets the password. "New invite" on a member row issues a fresh link and doubles as a password reset; admins and disabled users have no such button (an admin's password is reset with the command-line tool). "Disable" signs the person out at once and stops their keys until they are enabled again. Your own row and the last active admin cannot be disabled (the screen blocks both, and the gateway answers 409 as well). "Keys" on a row lists that person's keys and lets an admin revoke one; an admin cannot create a key for someone else.
 
 ### 6. Read the audit log
 

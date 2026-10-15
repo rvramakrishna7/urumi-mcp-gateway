@@ -1,0 +1,41 @@
+/*
+  The spot is one big round element, centred on the cursor. Only its "translate" (a transform) and its opacity change.
+  It sits above the backdrop and below the content, so it lights the grid and the lines and never the text.
+*/
+.spot {
+  position: fixed;
+  left: 0;
+  top: 0;
+  z-index: 0;
+  width: 720px;
+  height: 720px;
+  margin: -360px 0 0 -360px;
+  border-radius: 50%;
+  pointer-events: none;
+  opacity: 0;
+  translate: var(--spot, 50vw 50vh);
+  background: radial-gradient(
+    circle,
+    color-mix(in srgb, var(--accent) 6%, transparent) 0%,
+    color-mix(in srgb, var(--accent) 2.5%, transparent) 36%,
+    transparent 68%
+  );
+  transition: opacity var(--dur) var(--ease);
+}
+
+.near {
+  opacity: 1;
+}
+
+/* No spot for a pointer that cannot hover (touch) or when the user asks for less motion. */
+@media (hover: none), (pointer: coarse), (prefers-reduced-motion: reduce) {
+  .spot {
+    display: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .spot {
+    transition: none;
+  }
+}

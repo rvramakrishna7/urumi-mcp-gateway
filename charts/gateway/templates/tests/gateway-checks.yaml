@@ -52,6 +52,8 @@ spec:
         # The full Service name, as other callers will use it.
         - name: GATEWAY_URL
           value: "http://gateway.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.gateway.port }}"
+        - name: DASHBOARD_URL
+          value: "http://dashboard.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.dashboard.port }}"
       securityContext:
         allowPrivilegeEscalation: false
         readOnlyRootFilesystem: true

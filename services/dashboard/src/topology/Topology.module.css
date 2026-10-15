@@ -1,0 +1,165 @@
+/*
+  The signature drawing. Motion uses transform, opacity and stroke-dashoffset only, and all of it stops under
+  prefers-reduced-motion (the state stays readable: it is also written as text and drawn as a dash pattern).
+*/
+.svg {
+  display: block;
+  width: 100%;
+  height: auto;
+  overflow: visible;
+}
+
+.line {
+  fill: none;
+  stroke: var(--line-strong);
+  stroke-width: 2;
+  stroke-linejoin: round;
+}
+
+/* A packet is a round dot: a dash of almost no length with a round cap, repeated every 40 units and moved along the line. */
+.packet {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 6;
+  stroke-linecap: round;
+  stroke-dasharray: 0.1 39.9;
+  animation: travel 1.8s linear infinite;
+}
+
+.box {
+  fill: var(--panel);
+  stroke: var(--line-strong);
+  stroke-width: 1.5;
+}
+
+.label,
+.state {
+  font-family: var(--font-mono);
+  font-weight: 500;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.label {
+  fill: var(--fg);
+  font-size: 12px;
+}
+
+.state {
+  fill: var(--muted);
+  font-size: 10px;
+}
+
+.gateway .box {
+  stroke: var(--accent);
+}
+
+.ring {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 1;
+  opacity: 0.5;
+  animation: pulse 3.2s ease-in-out infinite;
+}
+
+.connected .state {
+  fill: var(--ok);
+}
+
+/* Unreachable: the line is the "bad" colour and the packet stands still, a little way out of the gateway. */
+.unreachable .line {
+  stroke: var(--bad);
+}
+.unreachable .packet {
+  stroke: var(--bad);
+  stroke-dasharray: 0.1 2000;
+  stroke-dashoffset: -64;
+  animation: none;
+}
+.unreachable .state {
+  fill: var(--bad);
+}
+.unreachable .box {
+  stroke: var(--bad);
+}
+
+/* Disabled: dim, dashed, and no packet. */
+.disabled {
+  opacity: 0.5;
+}
+.disabled .line {
+  stroke-dasharray: 4 7;
+}
+.disabled .packet {
+  visibility: hidden;
+  animation: none;
+}
+
+/* The servers plug in from the right, one after the other. The stagger is in these rules, not in style attributes. */
+.upstreams > g {
+  animation: plug 560ms var(--ease) both;
+}
+.upstreams > g:nth-child(1) {
+  animation-delay: 120ms;
+}
+.upstreams > g:nth-child(2) {
+  animation-delay: 240ms;
+}
+.upstreams > g:nth-child(3) {
+  animation-delay: 360ms;
+}
+.upstreams > g:nth-child(4) {
+  animation-delay: 480ms;
+}
+.upstreams > g:nth-child(n + 5) {
+  animation-delay: 600ms;
+}
+.upstreams > g:nth-child(2) .packet {
+  animation-delay: -0.6s;
+}
+.upstreams > g:nth-child(3) .packet {
+  animation-delay: -1.2s;
+}
+.upstreams > g:nth-child(4) .packet {
+  animation-delay: -0.3s;
+}
+
+/* No "to": the end state is the normal drawing, so with the animation off everything is simply there. */
+@keyframes plug {
+  from {
+    transform: translateX(36px);
+    opacity: 0;
+  }
+}
+
+@keyframes travel {
+  to {
+    stroke-dashoffset: -40;
+  }
+}
+
+@keyframes pulse {
+  50% {
+    opacity: 0.12;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .packet,
+  .ring,
+  .upstreams > g {
+    animation: none;
+  }
+}
+
+/* Unknown: the gateway has not probed this server yet. Muted, dotted, and no packet until it is known. */
+.unknown .line {
+  stroke-dasharray: 2 6;
+}
+.unknown .packet {
+  visibility: hidden;
+  animation: none;
+}
+.unknown .state {
+  fill: var(--muted);
+}

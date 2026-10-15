@@ -1,0 +1,87 @@
+/*
+  Design tokens, direction "Circuit". This is the only file with colour values: everything else uses var(--...).
+  test/tokens.test.ts measures the contrast of the pairs below (text 4.5:1, borders of controls 3:1) for both themes.
+
+  Theme rules: dark is the default; the light values apply when the browser prefers light (and no theme is chosen with
+  the toggle), or when the toggle sets data-theme="light". The toggle is kept in memory only.
+*/
+:root,
+:root[data-theme='dark'] {
+  color-scheme: dark;
+  --bg: #0c1413;
+  --fg: #e8f0ea;
+  --muted: #8fa39b;
+  --panel: #111c1a;
+  --line: #24403a;
+  --line-strong: #52746a;
+  --field: #0a1110;
+  --accent: #e89a5b;
+  --on-accent: #241204;
+  --ok: #5fd0b0;
+  --bad: #ff7f6b;
+  /* How much of its own colour a badge background takes (measured so the text keeps 4.5:1). */
+  --tint: 14%;
+}
+
+:root[data-theme='light'] {
+  color-scheme: light;
+  --bg: #eaf1ec;
+  --fg: #0f1f1b;
+  --muted: #55695f;
+  --panel: #f7fbf8;
+  --line: #b9cdc3;
+  --line-strong: #6b8479;
+  --field: #ffffff;
+  --accent: #a8541a;
+  --on-accent: #ffffff;
+  --ok: #0f7a60;
+  --bad: #c0392b;
+  --tint: 8%;
+}
+
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme]) {
+    color-scheme: light;
+    --bg: #eaf1ec;
+    --fg: #0f1f1b;
+    --muted: #55695f;
+    --panel: #f7fbf8;
+    --line: #b9cdc3;
+    --line-strong: #6b8479;
+    --field: #ffffff;
+    --accent: #a8541a;
+    --on-accent: #ffffff;
+    --ok: #0f7a60;
+    --bad: #c0392b;
+    --tint: 8%;
+  }
+}
+
+/* The values below do not depend on the theme. */
+:root {
+  --radius: 10px;
+
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-5: 1.5rem;
+  --space-6: 2rem;
+  --space-7: 3rem;
+  --space-8: 4rem;
+
+  --text-xs: 0.75rem;
+  --text-sm: 0.875rem;
+  --text-md: 1rem;
+  --text-lg: 1.25rem;
+  --text-xl: 1.75rem;
+  --text-hero: clamp(3rem, 7.6vw, 6.75rem);
+
+  --font-display: 'Bricolage Grotesque', 'IBM Plex Sans', system-ui, sans-serif;
+  --font-body: 'IBM Plex Sans', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-mono: 'IBM Plex Mono', ui-monospace, 'Cascadia Mono', Menlo, Consolas, monospace;
+
+  --dur-fast: 120ms;
+  --dur: 280ms;
+  --ease: cubic-bezier(0.2, 0.7, 0.2, 1);
+}
