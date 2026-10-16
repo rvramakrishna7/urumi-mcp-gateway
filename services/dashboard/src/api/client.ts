@@ -12,16 +12,47 @@ export type ApiErrorKind =
   | 'server' // 5xx, or an answer that is not what the contract says
   | 'network'; // the request did not reach the gateway
 
+// The fixed error markers of POST /api/chat, as short codes. The client keeps a marker only if it is in this list (REASONS), so
+// text from anywhere else can never become a reason. The status alone cannot tell the cases apart: 429 is the quota of the user or
+// the model service, 502 is a rejected request or an unavailable model, 503 is "not configured" or "database unavailable".
+export type ApiErrorReason =
+  | 'not_configured'
+  | 'invalid_request'
+  | 'rate_limited'
+  | 'service_unavailable'
+  | 'invalid_confirmation'
+  | 'model_rate_limited'
+  | 'model_timeout'
+  | 'model_rejected'
+  | 'model_unavailable'
+  | 'internal';
+
+const REASONS: Readonly<Record<string, ApiErrorReason>> = {
+  'chat not configured': 'not_configured',
+  'invalid request': 'invalid_request',
+  'too many requests': 'rate_limited',
+  'service unavailable': 'service_unavailable',
+  'invalid confirmation': 'invalid_confirmation',
+  'model rate limited': 'model_rate_limited',
+  'model timeout': 'model_timeout',
+  'model rejected the request': 'model_rejected',
+  'model unavailable': 'model_unavailable',
+  'internal error': 'internal',
+};
+
 export class ApiError extends Error {
   readonly kind: ApiErrorKind;
   // Only for 'throttled', and only when the gateway sent a usable Retry-After.
   readonly retryAfterSeconds: number | null;
+  // The allowlisted marker of the answer, or null (no body, another body, or a marker that is not in the list).
+  readonly reason: ApiErrorReason | null;
 
-  constructor(kind: ApiErrorKind, retryAfterSeconds: number | null = null) {
+  constructor(kind: ApiErrorKind, retryAfterSeconds: number | null = null, reason: ApiErrorReason | null = null) {
     super(kind);
     this.name = 'ApiError';
     this.kind = kind;
     this.retryAfterSeconds = retryAfterSeconds;
+    this.reason = reason;
   }
 }
 
@@ -41,20 +72,28 @@ function parseRetryAfter(value: string | null): number | null {
   return seconds > 0 ? seconds : null;
 }
 
+// Only the fixed marker of the gateway is read, to tell apart answers that share a status. Its text is never kept: a marker
+// that is not in REASONS becomes null.
+async function markerOf(response: Response): Promise<string | undefined> {
+  const body: unknown = await response.json().catch(() => null);
+  const marker = typeof body === 'object' && body !== null ? (body as { error?: unknown }).error : undefined;
+  return typeof marker === 'string' ? marker : undefined;
+}
+
+const reasonOf = (marker: string | undefined): ApiErrorReason | null => (marker !== undefined && Object.hasOwn(REASONS, marker) ? (REASONS[marker] ?? null) : null);
+
 async function errorFor(response: Response): Promise<ApiError> {
   const { status } = response;
   if (status === 401) return new ApiError('unauthorized');
   if (status === 403) return new ApiError('forbidden');
   if (status === 404) return new ApiError('notfound');
   if (status === 409) return new ApiError('limit');
-  if (status === 429) return new ApiError('throttled', parseRetryAfter(response.headers.get('Retry-After')));
+  if (status === 429) return new ApiError('throttled', parseRetryAfter(response.headers.get('Retry-After')), reasonOf(await markerOf(response)));
   if (status === 400) {
-    // Only the fixed marker of the gateway is read, and only to tell two kinds of 400 apart. The reason text is dropped.
-    const body: unknown = await response.json().catch(() => null);
-    const marker = typeof body === 'object' && body !== null ? (body as { error?: unknown }).error : undefined;
-    return new ApiError(marker === WEAK_PASSWORD ? 'weak' : 'invalid');
+    const marker = await markerOf(response);
+    return new ApiError(marker === WEAK_PASSWORD ? 'weak' : 'invalid', null, reasonOf(marker));
   }
-  return new ApiError('server');
+  return new ApiError('server', null, reasonOf(await markerOf(response)));
 }
 
 export async function request<T>(method: 'GET' | 'POST' | 'PATCH' | 'DELETE', path: string, body?: unknown): Promise<T | undefined> {
@@ -409,4 +448,45 @@ export async function listUserKeys(id: string): Promise<ApiKey[]> {
 
 export async function revokeUserKey(id: string, keyId: string): Promise<void> {
   await request('DELETE', `/api/admin/users/${encodeURIComponent(id)}/keys/${encodeURIComponent(keyId)}`);
+}
+
+export interface ChatMessage {
+  role: 'user' | 'assistant';
+  content: string;
+}
+
+export interface ChatToolCall {
+  name: string;
+  ok: boolean;
+  durationMs: number;
+}
+
+// A write tool that the server has not run. The token is bound to the user, the tool and these arguments and expires in 5 minutes.
+export interface ChatPending {
+  token: string;
+  name: string;
+  args: Record<string, unknown>;
+}
+
+export interface ChatReply {
+  reply: string;
+  toolCalls: ChatToolCall[];
+  pending: ChatPending | null;
+}
+
+const isPlainObject = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null && !Array.isArray(value);
+
+const isChatToolCall = (value: unknown): value is ChatToolCall =>
+  isPlainObject(value) && typeof value.name === 'string' && typeof value.ok === 'boolean' && typeof value.durationMs === 'number';
+
+const isChatPending = (value: unknown): value is ChatPending =>
+  isPlainObject(value) && typeof value.token === 'string' && typeof value.name === 'string' && isPlainObject(value.args);
+
+// One turn. The gateway keeps no conversation: the whole history goes with every request. To run a pending write, the same history
+// goes again with the confirm object that the last answer carried.
+export async function sendChat(messages: ChatMessage[], confirm?: ChatPending): Promise<ChatReply> {
+  const answer = await request<{ reply?: unknown; toolCalls?: unknown; pending?: unknown }>('POST', '/api/chat', confirm ? { messages, confirm } : { messages });
+  if (!answer || typeof answer.reply !== 'string' || !Array.isArray(answer.toolCalls) || !answer.toolCalls.every(isChatToolCall)) throw new ApiError('server');
+  if (answer.pending !== undefined && !isChatPending(answer.pending)) throw new ApiError('server');
+  return { reply: answer.reply, toolCalls: answer.toolCalls, pending: answer.pending ?? null };
 }

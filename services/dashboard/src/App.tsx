@@ -6,6 +6,7 @@ import { PublicOnly, RequireAdmin, RequireAuth } from './auth/guards';
 import { AcceptInvitePage, acceptInviteLoader } from './pages/AcceptInvitePage';
 import { AppHomePage } from './pages/AppHomePage';
 import { AuditPage } from './pages/AuditPage';
+import { ChatPage } from './pages/ChatPage';
 import { KeysPage } from './pages/KeysPage';
 import { LoginPage } from './pages/LoginPage';
 import { ServersPage } from './pages/ServersPage';
@@ -22,6 +23,7 @@ export const appRoutes: RouteObject[] = [
     element: <RequireAuth />,
     children: [
       { path: '/', element: <AppHomePage /> },
+      { path: '/chat', element: <ChatPage /> },
       { path: '/keys', element: <KeysPage /> },
       { path: '/audit', element: <AuditPage /> },
       {
