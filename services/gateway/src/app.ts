@@ -20,6 +20,8 @@ export interface AppDeps {
   me?: Router;
   // The audit log for the dashboard, mounted at /api/audit.
   audit?: Router;
+  // The chat agent for the dashboard, mounted at /api/chat.
+  chat?: Router;
 }
 
 export interface GatewayApp {
@@ -28,7 +30,7 @@ export interface GatewayApp {
   beginShutdown: () => void;
 }
 
-export function createApp({ logger, checkDatabase, admin, mcp, auth, me, audit }: AppDeps): GatewayApp {
+export function createApp({ logger, checkDatabase, admin, mcp, auth, me, audit, chat }: AppDeps): GatewayApp {
   const app = express();
   app.disable('x-powered-by');
   let shuttingDown = false;
@@ -74,6 +76,7 @@ export function createApp({ logger, checkDatabase, admin, mcp, auth, me, audit }
   if (auth) app.use('/api/auth', auth);
   if (me) app.use('/api/me', me);
   if (audit) app.use('/api/audit', audit);
+  if (chat) app.use('/api/chat', chat);
   if (admin) app.use('/api/admin', createAdminRouter(admin));
 
   app.use((_req, res) => {

@@ -129,3 +129,58 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   if (!parsed.success) throw invalid(parsed.error);
   return { port: parsed.data.PORT, db: loadDbConfig(env) };
 }
+
+export interface ChatConfig {
+  // Undefined when the Secret is not there: the chat endpoint then answers 503 and the rest of the gateway is unchanged.
+  groqApiKey: string | undefined;
+  model: string;
+  // Exposed tool names that need a confirmation before they run (docs/architecture.md, decision 40).
+  confirmTools: string[];
+  ratePerMinute: number;
+}
+
+export const DEFAULT_CHAT_MODEL = 'openai/gpt-oss-120b';
+export const DEFAULT_CONFIRM_TOOLS = ['woo__create_product', 'woo__update_order_status'];
+const DEFAULT_CHAT_RATE_PER_MINUTE = 10;
+const GROQ_KEY_FORMAT = /^[\x21-\x7e]{8,200}$/;
+const CONFIRM_TOOL_NAME = /^[A-Za-z0-9_-]{1,100}$/;
+
+const chatSchema = z.object({
+  GROQ_API_KEY_FILE: z.string().min(1).optional(),
+  CHAT_MODEL: z.string().regex(/^[A-Za-z0-9._/-]{1,100}$/).default(DEFAULT_CHAT_MODEL),
+  // A list that is set must not be empty: an empty value would switch the confirmation off without anybody deciding it.
+  CHAT_CONFIRM_TOOLS: z.string().min(1).optional(),
+  CHAT_RATE_PER_MINUTE: z.coerce.number().int().min(1).max(600).default(DEFAULT_CHAT_RATE_PER_MINUTE),
+});
+
+// The Groq key is read from a file (a mounted Kubernetes Secret), never from an environment variable. A file that does not
+// exist means "chat is not configured". A file that exists and is empty or malformed is a mistake and stops the start.
+export function loadChatConfig(env: NodeJS.ProcessEnv = process.env): ChatConfig {
+  const parsed = chatSchema.safeParse(env);
+  if (!parsed.success) throw invalid(parsed.error);
+
+  let groqApiKey: string | undefined;
+  const file = parsed.data.GROQ_API_KEY_FILE;
+  if (file !== undefined) {
+    let text: string | undefined;
+    try {
+      text = readFileSync(file, 'utf8').trim();
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw new ConfigError('GROQ_API_KEY_FILE cannot be read');
+    }
+    if (text !== undefined) {
+      if (!GROQ_KEY_FORMAT.test(text)) throw new ConfigError('GROQ_API_KEY_FILE must hold one key of 8 to 200 printable characters');
+      groqApiKey = text;
+    }
+  }
+
+  let confirmTools = DEFAULT_CONFIRM_TOOLS;
+  if (parsed.data.CHAT_CONFIRM_TOOLS !== undefined) {
+    confirmTools = parsed.data.CHAT_CONFIRM_TOOLS.split(',').map((name) => name.trim());
+    if (confirmTools.length === 0 || !confirmTools.every((name) => CONFIRM_TOOL_NAME.test(name))) {
+      throw new ConfigError('invalid or missing configuration: CHAT_CONFIRM_TOOLS');
+    }
+  }
+
+  return { groqApiKey, model: parsed.data.CHAT_MODEL, confirmTools, ratePerMinute: parsed.data.CHAT_RATE_PER_MINUTE };
+}
