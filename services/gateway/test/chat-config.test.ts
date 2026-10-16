@@ -22,9 +22,9 @@ describe('loadChatConfig', () => {
   });
 
   test('with nothing set: no key, the default model, the two write tools, ten requests per minute', () => {
-    assert.deepEqual(loadChatConfig({}), { groqApiKey: undefined, model: 'openai/gpt-oss-120b', confirmTools: ['woo__create_product', 'woo__update_order_status'], ratePerMinute: 10 });
+    assert.deepEqual(loadChatConfig({}), { groqApiKey: undefined, model: 'openai/gpt-oss-120b', confirmTools: ['woo__create_product', 'woo__update_order_status', 'fetch__fetch'], ratePerMinute: 10 });
     assert.equal(DEFAULT_CHAT_MODEL, 'openai/gpt-oss-120b');
-    assert.deepEqual(DEFAULT_CONFIRM_TOOLS, ['woo__create_product', 'woo__update_order_status']);
+    assert.deepEqual(DEFAULT_CONFIRM_TOOLS, ['woo__create_product', 'woo__update_order_status', 'fetch__fetch']);
   });
 
   test('the key is read from the file and trimmed', () => {

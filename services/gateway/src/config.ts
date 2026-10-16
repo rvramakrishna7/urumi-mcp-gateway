@@ -140,7 +140,7 @@ export interface ChatConfig {
 }
 
 export const DEFAULT_CHAT_MODEL = 'openai/gpt-oss-120b';
-export const DEFAULT_CONFIRM_TOOLS = ['woo__create_product', 'woo__update_order_status'];
+export const DEFAULT_CONFIRM_TOOLS = ['woo__create_product', 'woo__update_order_status', 'fetch__fetch'];
 const DEFAULT_CHAT_RATE_PER_MINUTE = 10;
 const GROQ_KEY_FORMAT = /^[\x21-\x7e]{8,200}$/;
 const CONFIRM_TOOL_NAME = /^[A-Za-z0-9_-]{1,100}$/;
