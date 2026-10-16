@@ -1,6 +1,6 @@
 {
   "name": "dashboard",
-  "version": "0.6.1",
+  "version": "0.7.0",
   "description": "Team MCP gateway dashboard: login, upstream servers, users, API keys and the audit log",
   "private": true,
   "type": "module",

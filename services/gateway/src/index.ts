@@ -1,6 +1,6 @@
 import { createApp } from './app.ts';
-import { ConfigError, loadConfig, loadSecurityConfig } from './config.ts';
-import type { Config, SecurityConfig } from './config.ts';
+import { ConfigError, loadChatConfig, loadConfig, loadSecurityConfig } from './config.ts';
+import type { ChatConfig, Config, SecurityConfig } from './config.ts';
 import { CryptoError, loadKeyring } from './crypto/credentials.ts';
 import type { Keyring } from './crypto/credentials.ts';
 import { checkDatabase, createPool } from './db/pool.ts';
@@ -12,6 +12,9 @@ import { sessionAuthConfig } from './auth/session.ts';
 import { createAuthRouter } from './routes/auth.ts';
 import { createMeKeysRouter } from './routes/me-keys.ts';
 import { createAuditRouter } from './routes/audit.ts';
+import { createChatRouter } from './routes/chat.ts';
+import { createAgent } from './chat/agent.ts';
+import { createGroqClient } from './chat/groq.ts';
 import { applyBootstrap, BootstrapError, readBootstrapToken } from './identity/invites.ts';
 import { createPoller } from './upstream/poller.ts';
 
@@ -19,10 +22,12 @@ const logger = createLogger();
 
 let config: Config;
 let security: SecurityConfig;
+let chatConfig: ChatConfig;
 let keyring: Keyring;
 try {
   config = loadConfig();
   security = loadSecurityConfig();
+  chatConfig = loadChatConfig();
   // The master key must be exactly 32 bytes. A wrong or missing key stops the start with a clear reason.
   keyring = loadKeyring(security.masterKeyFile, security.masterKeyId);
 } catch (error) {
@@ -63,6 +68,18 @@ const mcp = createMcpRouter({ db: pool, gateway, logger, allowedHosts: security.
 
 const sessions = sessionAuthConfig(security.publicOrigin);
 
+// Without a Groq key there is no agent, and POST /api/chat answers 503. Nothing else depends on it.
+const agent = chatConfig.groqApiKey
+  ? createAgent({
+      gateway,
+      groq: createGroqClient({ apiKey: chatConfig.groqApiKey, model: chatConfig.model }),
+      keyring,
+      logger,
+      confirmTools: chatConfig.confirmTools,
+    })
+  : undefined;
+logger.info('chat', { configured: agent !== undefined, model: chatConfig.model, confirmTools: chatConfig.confirmTools.length, ratePerMinute: chatConfig.ratePerMinute });
+
 const { app, beginShutdown } = createApp({
   logger,
   checkDatabase: () => checkDatabase(pool),
@@ -71,6 +88,7 @@ const { app, beginShutdown } = createApp({
   auth: createAuthRouter({ db: pool, logger, sessions }),
   me: createMeKeysRouter({ db: pool, logger, sessions }),
   audit: createAuditRouter({ db: pool, logger, sessions }),
+  chat: createChatRouter({ db: pool, logger, sessions, agent, ratePerMinute: chatConfig.ratePerMinute }),
 });
 const server = app.listen(config.port, () => {
   logger.info('listening', { port: config.port });

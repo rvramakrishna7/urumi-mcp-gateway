@@ -100,3 +100,34 @@ export function usersMessage(error: unknown, action: 'load' | 'invite' | 'reinvi
   if (action === 'keys') return 'The keys of this user could not be loaded right now. Try again in a moment.';
   return 'The members could not be loaded right now. Try again in a moment.';
 }
+
+// "45 s", "1 min 5 s", "2 min".
+export function waitText(totalSeconds: number): string {
+  const seconds = Math.max(0, Math.ceil(totalSeconds));
+  if (seconds < 60) return `${seconds} s`;
+  const minutes = Math.floor(seconds / 60);
+  const rest = seconds % 60;
+  return rest === 0 ? `${minutes} min` : `${minutes} min ${rest} s`;
+}
+
+export const CHAT_CHANGE_UNKNOWN = 'The change may or may not have run. Check the audit log or the store before you repeat it.';
+
+// The sentence for a failed chat request, chosen by the status kind and the allowlisted reason. Nothing from the answer is shown.
+// "confirming" is a Run press: a failure then must not let the person think that nothing happened unless that is certain.
+export function chatMessage(error: unknown, confirming = false): string {
+  const kind = kindOf(error);
+  const reason = error instanceof ApiError ? error.reason : null;
+  const unknown = confirming ? ` ${CHAT_CHANGE_UNKNOWN}` : '';
+  if (kind === 'network') return confirming ? `Cannot reach the server.${unknown}` : 'Cannot reach the server. Check your connection and try again.';
+  if (kind === 'unauthorized') return 'Your session has ended. Sign in again.';
+  if (reason === 'invalid_confirmation') return 'This confirmation expired or is no longer valid. Nothing was run. Ask again to get a new one.';
+  if (reason === 'not_configured') return 'The chat assistant is not set up on this gateway yet. Ask an admin.';
+  if (reason === 'rate_limited') return 'You are sending messages too fast.';
+  if (reason === 'model_rate_limited') return confirming ? `The model service is busy.${unknown}` : 'The model service is busy. Try again shortly.';
+  if (reason === 'model_timeout') return confirming ? `The model service took too long.${unknown}` : 'The model service took too long. Try again with a shorter request.';
+  if (reason === 'model_rejected') return confirming ? `The model service refused the request.${unknown}` : 'The model service refused this request. Start with a shorter message.';
+  if (reason === 'model_unavailable') return confirming ? `The model service is not available.${unknown}` : 'The model service is not available right now. Try again in a moment.';
+  if (reason === 'service_unavailable') return 'Chat is not available right now. Nothing was run. Try again in a moment.';
+  if (reason === 'invalid_request') return 'This message could not be sent. Nothing was run. Start a shorter conversation.';
+  return confirming ? `Something went wrong.${unknown}` : 'Something went wrong. Try again in a moment.';
+}

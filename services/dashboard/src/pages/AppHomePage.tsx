@@ -45,6 +45,9 @@ export function AppHomePage() {
             Could not sign out. Try again.
           </p>
         ) : null}
+        <Link to="/chat" className={styles.link}>
+          Chat
+        </Link>
         <Link to="/keys" className={styles.link}>
           API keys
         </Link>
