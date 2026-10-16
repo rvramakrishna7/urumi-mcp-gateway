@@ -47,3 +47,45 @@ wooMcp:
     limits:
       cpu: 500m
       memory: 256Mi
+
+# fx-mcp: our own currency-rate server (docs/architecture.md, decision 41). It needs egress to the rate service.
+fxMcp:
+  image:
+    repository: fx-mcp
+    # Pinned to an exact version. Never use latest.
+    tag: "0.1.0"
+    pullPolicy: IfNotPresent
+  imagePullSecrets: []
+  port: 8080
+  # The rate service. It is configuration only: no tool takes an address.
+  baseUrl: https://api.frankfurter.dev
+  requestTimeoutMs: 8000
+  extraAllowedHosts:
+    - localhost
+    - 127.0.0.1
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi
+
+# fetch-mcp: the reference Fetch server behind supergateway (decision 42). There is no code of ours in the image.
+# It is an HTTP client for whoever can call it, so the SSRF guard of mcp-server-fetch must stay on: never add
+# --allow-private-ips and never set a proxy.
+fetchMcp:
+  image:
+    repository: fetch-mcp
+    # Pinned to an exact version. Never use latest.
+    tag: "0.1.0"
+    pullPolicy: IfNotPresent
+  imagePullSecrets: []
+  port: 8080
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: "1"
+      memory: 512Mi

@@ -6,7 +6,7 @@ gateway:
   image:
     repository: gateway
     # Pinned to an exact version. Never use latest.
-    tag: "0.9.0"
+    tag: "0.9.1"
     pullPolicy: IfNotPresent
   # Names of Secrets (of type kubernetes.io/dockerconfigjson) that hold registry credentials. Empty for the
   # local cluster, where the image is imported with "k3d image import".
@@ -72,6 +72,8 @@ chat:
   confirmTools:
     - woo__create_product
     - woo__update_order_status
+    # A GET to a URL that the model chooses can send data out (decision 42), so every fetch needs a click.
+    - fetch__fetch
   # Chat requests per user and minute (the gateway answers 429 above it).
   ratePerMinute: 10
 
@@ -92,6 +94,28 @@ seed:
         source:
           namespace: mcp-servers
           secret: woo-mcp-auth
+          key: token
+    - slug: fx
+      name: Currency rates
+      # fx-mcp (decision 41), inside the cluster.
+      url: http://fx-mcp.mcp-servers.svc.cluster.local:8080/mcp
+      callTimeoutMs: 30000
+      credential:
+        kind: bearer
+        source:
+          namespace: mcp-servers
+          secret: fx-mcp-auth
+          key: token
+    - slug: fetch
+      name: Web fetch
+      # fetch-mcp, the reference Fetch server behind supergateway (decision 42), inside the cluster.
+      url: http://fetch-mcp.mcp-servers.svc.cluster.local:8080/mcp
+      callTimeoutMs: 30000
+      credential:
+        kind: bearer
+        source:
+          namespace: mcp-servers
+          secret: fetch-mcp-auth
           key: token
 
 postgres:

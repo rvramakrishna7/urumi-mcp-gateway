@@ -1,0 +1,18 @@
+{{- /*
+ClusterIP only, and there is no Ingress in this chart: fx-mcp is reachable from inside the cluster only.
+*/ -}}
+apiVersion: v1
+kind: Service
+metadata:
+  name: fx-mcp
+  labels:
+    {{- include "mcp-servers.labels" . | nindent 4 }}
+    app.kubernetes.io/component: fx-mcp
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "mcp-servers.selectorLabels" (dict "root" . "component" "fx-mcp") | nindent 4 }}
+  ports:
+    - name: http
+      port: {{ .Values.fxMcp.port }}
+      targetPort: http
