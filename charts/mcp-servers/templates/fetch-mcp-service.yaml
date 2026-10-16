@@ -1,0 +1,18 @@
+{{- /*
+ClusterIP only, and there is no Ingress in this chart: fetch-mcp is reachable from inside the cluster only.
+*/ -}}
+apiVersion: v1
+kind: Service
+metadata:
+  name: fetch-mcp
+  labels:
+    {{- include "mcp-servers.labels" . | nindent 4 }}
+    app.kubernetes.io/component: fetch-mcp
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "mcp-servers.selectorLabels" (dict "root" . "component" "fetch-mcp") | nindent 4 }}
+  ports:
+    - name: http
+      port: {{ .Values.fetchMcp.port }}
+      targetPort: http

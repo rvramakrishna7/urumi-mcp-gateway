@@ -1,0 +1,100 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: fetch-mcp
+  labels:
+    {{- include "mcp-servers.labels" . | nindent 4 }}
+    app.kubernetes.io/component: fetch-mcp
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "mcp-servers.selectorLabels" (dict "root" . "component" "fetch-mcp") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "mcp-servers.labels" . | nindent 8 }}
+        app.kubernetes.io/component: fetch-mcp
+    spec:
+      # fetch-mcp never talks to the Kubernetes API, so it gets no ServiceAccount token.
+      automountServiceAccountToken: false
+      {{- with .Values.fetchMcp.imagePullSecrets }}
+      imagePullSecrets:
+        {{- range . }}
+        - name: {{ . | quote }}
+        {{- end }}
+      {{- end }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        # Lets the group of the process read the mounted Secret file (mode 0440).
+        fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: fetch-mcp
+          image: "{{ .Values.fetchMcp.image.repository }}:{{ .Values.fetchMcp.image.tag }}"
+          imagePullPolicy: {{ .Values.fetchMcp.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.fetchMcp.port }}
+          # The entrypoint of the image is supergateway. These are the same arguments as the CMD of the image, with the
+          # port from the values. mcp-server-fetch is started WITHOUT --allow-private-ips and without a proxy, so its
+          # refusal of non-public addresses stays on (decision 42). The token is read from the mounted file.
+          args:
+            - --stdio
+            - /opt/fetch/bin/mcp-server-fetch
+            - --outputTransport
+            - streamableHttp
+            - --port
+            - {{ .Values.fetchMcp.port | quote }}
+            - --streamableHttpPath
+            - /mcp
+            - --healthEndpoint
+            - /healthz
+            - --logLevel
+            - info
+            - --logFormat
+            - json
+            - --apiKeyFile
+            - /secrets/auth/token
+          # supergateway has one health route, and it needs no token. It does not fetch anything from the internet.
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 5
+            timeoutSeconds: 2
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 20
+            timeoutSeconds: 2
+            failureThreshold: 3
+          resources:
+            {{- toYaml .Values.fetchMcp.resources | nindent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          volumeMounts:
+            # The image sets HOME=/tmp. The root filesystem is read only, so this is the only writable place.
+            - name: tmp
+              mountPath: /tmp
+            - name: auth
+              mountPath: /secrets/auth
+              readOnly: true
+      volumes:
+        - name: tmp
+          emptyDir:
+            sizeLimit: 128Mi
+        - name: auth
+          secret:
+            secretName: fetch-mcp-auth
+            defaultMode: 0440

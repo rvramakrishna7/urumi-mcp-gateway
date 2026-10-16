@@ -1,6 +1,6 @@
 apiVersion: v2
 name: mcp-servers
-description: Upstream MCP servers of the team MCP gateway. Today it deploys woo-mcp, the WooCommerce MCP server.
+description: Upstream MCP servers of the team MCP gateway. Deploys woo-mcp (WooCommerce), fx-mcp (currency rates) and fetch-mcp (the reference Fetch server behind supergateway).
 type: application
-version: 0.1.1
+version: 0.2.0
 appVersion: "0.1.1"

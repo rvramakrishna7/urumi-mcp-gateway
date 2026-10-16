@@ -32,3 +32,34 @@ wooMcp:
     limits:
       cpu: "1"
       memory: 512Mi
+
+fxMcp:
+  image:
+    repository: registry.example.com/urumi/fx-mcp
+    tag: "0.1.0"
+    pullPolicy: IfNotPresent
+  imagePullSecrets:
+    - registry-credentials
+  # fx-mcp needs egress to api.frankfurter.dev. The NetworkPolicy of Step 17 must allow it.
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: "1"
+      memory: 512Mi
+
+fetchMcp:
+  image:
+    repository: registry.example.com/urumi/fetch-mcp
+    tag: "0.1.0"
+    pullPolicy: IfNotPresent
+  imagePullSecrets:
+    - registry-credentials
+  resources:
+    requests:
+      cpu: 200m
+      memory: 256Mi
+    limits:
+      cpu: "1"
+      memory: 768Mi

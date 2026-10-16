@@ -1,0 +1,95 @@
+{{- /*
+"helm test" runs files/upstream-checks.mjs in one short-lived Pod per server (fx-mcp, fetch-mcp), inside the namespace
+of the release, with the image of that server. The Pods mount only the token of their own server. They have no probes:
+like the test Pod of woo-mcp they are run-to-completion workloads, bounded by activeDeadlineSeconds and resource limits.
+The command replaces the entrypoint of the image (supergateway in fetch-mcp), so the script is run by node directly.
+*/ -}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mcp-upstream-checks
+  labels:
+    {{- include "mcp-servers.labels" . | nindent 4 }}
+    app.kubernetes.io/component: test
+  annotations:
+    helm.sh/hook: test
+    helm.sh/hook-weight: "-1"
+    helm.sh/hook-delete-policy: before-hook-creation
+data:
+  upstream-checks.mjs: |
+    {{- .Files.Get "files/upstream-checks.mjs" | nindent 4 }}
+{{- range $server := list
+    (dict "component" "fx-mcp" "values" $.Values.fxMcp "tools" "list_currencies,get_rate,convert_amounts" "health" "/healthz,/readyz" "secret" "fx-mcp-auth")
+    (dict "component" "fetch-mcp" "values" $.Values.fetchMcp "tools" "fetch" "health" "/healthz" "secret" "fetch-mcp-auth") }}
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: {{ $server.component }}-checks
+  labels:
+    {{- include "mcp-servers.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: test
+  annotations:
+    helm.sh/hook: test
+    helm.sh/hook-weight: "0"
+    # The previous test Pod is replaced on the next run, so its logs stay available until then.
+    helm.sh/hook-delete-policy: before-hook-creation
+spec:
+  restartPolicy: Never
+  activeDeadlineSeconds: 120
+  automountServiceAccountToken: false
+  {{- with $server.values.imagePullSecrets }}
+  imagePullSecrets:
+    {{- range . }}
+    - name: {{ . | quote }}
+    {{- end }}
+  {{- end }}
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 10001
+    runAsGroup: 10001
+    fsGroup: 10001
+    seccompProfile:
+      type: RuntimeDefault
+  containers:
+    - name: checks
+      image: "{{ $server.values.image.repository }}:{{ $server.values.image.tag }}"
+      imagePullPolicy: {{ $server.values.image.pullPolicy }}
+      command: ["node", "/scripts/upstream-checks.mjs"]
+      env:
+        # The full Service name, because fx-mcp checks the Host header.
+        - name: UPSTREAM_URL
+          value: "http://{{ $server.component }}.{{ $.Release.Namespace }}.svc.{{ $.Values.clusterDomain }}:{{ $server.values.port }}"
+        - name: EXPECTED_TOOLS
+          value: {{ $server.tools | quote }}
+        - name: HEALTH_PATHS
+          value: {{ $server.health | quote }}
+      securityContext:
+        allowPrivilegeEscalation: false
+        readOnlyRootFilesystem: true
+        capabilities:
+          drop:
+            - ALL
+      resources:
+        requests:
+          cpu: 25m
+          memory: 64Mi
+        limits:
+          cpu: 250m
+          memory: 128Mi
+      volumeMounts:
+        - name: scripts
+          mountPath: /scripts
+          readOnly: true
+        - name: auth
+          mountPath: /secrets/auth
+          readOnly: true
+  volumes:
+    - name: scripts
+      configMap:
+        name: mcp-upstream-checks
+    - name: auth
+      secret:
+        secretName: {{ $server.secret }}
+        defaultMode: 0440
+{{- end }}

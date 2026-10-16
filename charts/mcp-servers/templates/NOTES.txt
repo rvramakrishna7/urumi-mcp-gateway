@@ -13,3 +13,11 @@ After a key rotation in the store, run "helm upgrade" again: the pod restarts wi
 Check the server with:
 
   helm test {{ .Release.Name }} -n {{ .Release.Namespace }}
+
+fx-mcp and fetch-mcp are installed in the same namespace and are also reachable only inside the cluster:
+
+  http://fx-mcp.{{ .Release.Namespace }}.svc.{{ .Values.clusterDomain }}:{{ .Values.fxMcp.port }}/mcp
+  http://fetch-mcp.{{ .Release.Namespace }}.svc.{{ .Values.clusterDomain }}:{{ .Values.fetchMcp.port }}/mcp
+
+Each has its own bearer token in the Secrets "fx-mcp-auth" and "fetch-mcp-auth" (field "token", generated on first install).
+"helm test" checks both: it lists the tools with the token and expects 401 without it.

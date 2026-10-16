@@ -65,3 +65,21 @@ Parse the result with fromJson.
 {{- dict "consumer-key" ("offline-render-placeholder" | b64enc) "consumer-secret" ("offline-render-placeholder" | b64enc) | toJson -}}
 {{- end -}}
 {{- end -}}
+
+{{/*
+Selector labels of the pods of one component. Call with: dict "root" . "component" "fx-mcp".
+*/}}
+{{- define "mcp-servers.selectorLabels" -}}
+app.kubernetes.io/name: {{ .root.Chart.Name }}
+app.kubernetes.io/instance: {{ .root.Release.Name }}
+app.kubernetes.io/component: {{ .component }}
+{{- end -}}
+
+{{/*
+Host names that fx-mcp accepts in the Host header: the names of its own Service, then the extra names.
+*/}}
+{{- define "mcp-servers.fxMcp.allowedHosts" -}}
+{{- $ns := .Release.Namespace -}}
+{{- $names := list "fx-mcp" (printf "fx-mcp.%s" $ns) (printf "fx-mcp.%s.svc" $ns) (printf "fx-mcp.%s.svc.%s" $ns .Values.clusterDomain) -}}
+{{- join "," (concat $names .Values.fxMcp.extraAllowedHosts) -}}
+{{- end -}}
