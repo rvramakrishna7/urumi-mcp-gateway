@@ -345,3 +345,51 @@ The Secret is optional in the chart: without it the gateway starts normally and 
 Writes need a confirmation. The tools in `chat.confirmTools` (default `woo__create_product` and `woo__update_order_status`) never run on the model's request alone: the screen shows a card with the tool and its arguments, and the change runs only after **Run**. The server checks a signed, 5-minute token bound to the user, the tool and the arguments, so posting to the route directly does not skip the card. **Cancel** sends nothing. If a Run fails in a way that may have run the change (a lost connection, a 500), the card is removed and the screen says to check the audit log before repeating it.
 
 A user can send `chat.ratePerMinute` requests per minute (default 10; over it the gateway answers 429 and the screen shows a countdown). Groq has its own limits: rapid successive turns can end in "The model service is busy" (see the known limitations in `docs/architecture.md`).
+
+## Additional upstream servers (fx-mcp, fetch-mcp)
+
+The gateway has two more upstream servers, both deployed by the `mcp-servers` chart next to woo-mcp and, like it, reachable only inside the cluster with a bearer token. Both are documented in detail in `docs/architecture.md`, decisions 41 and 42.
+
+### 1. fx-mcp (currency rates)
+
+fx-mcp is an own-built MCP server (`services/fx-mcp`, the same skeleton as woo-mcp) that reads the public Frankfurter API. It needs egress to `api.frankfurter.dev`. It has three read-only tools: `list_currencies`, `get_rate` and `convert_amounts`. The last one converts a list of amounts and returns the sum, so the model does not do the arithmetic itself.
+
+```bash
+cd services/fx-mcp
+npm ci
+npm run typecheck
+npm test
+cd ../..
+
+docker build -t fx-mcp:0.1.0 services/fx-mcp
+k3d image import fx-mcp:0.1.0 -c urumi
+```
+
+The tests need no cluster and no internet: they use a fake Frankfurter server. Then run the `helm upgrade` of woo-mcp step 3 again, which creates the Deployment, the Service and the Secret `fx-mcp-auth`. The gateway seeds the server automatically under the slug `fx` (tools `fx__list_currencies`, `fx__get_rate`, `fx__convert_amounts`) with its token copied from that Secret, so run the `helm upgrade` of the gateway step 1 after it.
+
+### 2. fetch-mcp (fetch a URL)
+
+fetch-mcp is the reference `mcp-server-fetch` (pinned to an exact version in `services/fetch-mcp/requirements.txt`) behind `supergateway`, which serves it as Streamable HTTP. It has one tool, `fetch`, and no server code of ours.
+
+```bash
+docker build -t fetch-mcp:0.1.0 services/fetch-mcp
+k3d image import fetch-mcp:0.1.0 -c urumi
+```
+
+Run the `helm upgrade` of woo-mcp step 3 and then the one of the gateway step 1, as for fx-mcp. The gateway seeds the server under the slug `fetch`, so the tool is `fetch__fetch`. In the chat agent `fetch__fetch` is in `chat.confirmTools`: every fetch shows a confirmation card with the exact URL, and it runs only after **Run**. This is on purpose, because a fetch is also a way to send data out.
+
+There are no unit tests of our own. The check is at image level: `services/fetch-mcp/test/ssrf-drill.mjs` calls `fetch` with loopback, private and metadata addresses, other encodings of them and redirects to them, and expects every one to be refused; it also fetches public URLs, so a drill that refuses everything is not mistaken for a pass. It needs a canary web server on a private address (port 8000, `/canary.txt` holding the marker `INTERNAL-CANARY-9f3a`) that the pod can reach. Open a port-forward in one terminal:
+
+```bash
+kubectl port-forward svc/fetch-mcp 18092:8080 -n mcp-servers
+```
+
+In a second terminal, write the token to a file (it is not printed) and run the drill:
+
+```bash
+kubectl get secret fetch-mcp-auth -n mcp-servers -o jsonpath='{.data.token}' | base64 -d > fetch-token.txt
+node services/fetch-mcp/test/ssrf-drill.mjs http://127.0.0.1:18092 fetch-token.txt <canary-host> <canary-ip>
+rm fetch-token.txt
+```
+
+The drill prints one line per target (names and verdicts, never the token or a fetched body). The script header explains the `--expect-open` flag, which is for a container started with `--allow-private-ips`.
