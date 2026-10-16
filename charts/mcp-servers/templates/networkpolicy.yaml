@@ -1,0 +1,144 @@
+{{- if .Values.networkPolicy.enabled }}
+# Decision 7 and Step 17. Default deny for the namespace, then one small allow for each need.
+# Policies are additive: a pod can do whatever any policy that selects it allows.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny
+  labels:
+    {{- include "mcp-servers.labels" . | nindent 4 }}
+spec:
+  podSelector: {}
+  policyTypes: [Ingress, Egress]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-dns
+  labels:
+    {{- include "mcp-servers.labels" . | nindent 4 }}
+spec:
+  podSelector: {}
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - { protocol: UDP, port: 53 }
+        - { protocol: TCP, port: 53 }
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-from-gateway
+  labels:
+    {{- include "mcp-servers.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchExpressions:
+      - { key: app.kubernetes.io/component, operator: In, values: [woo-mcp, fx-mcp, fetch-mcp] }
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.networkPolicy.gatewayNamespace }}
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: gateway
+              app.kubernetes.io/component: gateway
+      ports:
+        - { protocol: TCP, port: {{ .Values.wooMcp.port }} }
+        - { protocol: TCP, port: {{ .Values.fxMcp.port }} }
+        - { protocol: TCP, port: {{ .Values.fetchMcp.port }} }
+---
+# woo-mcp: only the WordPress pod of the store, on its HTTP port. No internet.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: woo-mcp-egress
+  labels:
+    {{- include "mcp-servers.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/component: woo-mcp
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.wooMcp.store.namespace }}
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/component: wordpress
+      ports:
+        - { protocol: TCP, port: {{ .Values.networkPolicy.storePort }} }
+---
+# fx-mcp and fetch-mcp: the public internet on ports 80 and 443 only. Every private, loopback and link-local
+# range is excluded. The pod CIDR (10.42.0.0/16) and the Service CIDR (10.43.0.0/16) are inside 10.0.0.0/8.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: public-internet-egress
+  labels:
+    {{- include "mcp-servers.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchExpressions:
+      - { key: app.kubernetes.io/component, operator: In, values: [fx-mcp, fetch-mcp] }
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              {{- toYaml .Values.networkPolicy.privateRanges | nindent 14 }}
+      ports:
+        - { protocol: TCP, port: 80 }
+        - { protocol: TCP, port: 443 }
+---
+# helm test pods (component=test) call the three Services inside the namespace.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: helm-tests
+  labels:
+    {{- include "mcp-servers.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/component: test
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - podSelector:
+            matchExpressions:
+              - { key: app.kubernetes.io/component, operator: In, values: [woo-mcp, fx-mcp, fetch-mcp] }
+      ports:
+        - { protocol: TCP, port: {{ .Values.wooMcp.port }} }
+        - { protocol: TCP, port: {{ .Values.fxMcp.port }} }
+        - { protocol: TCP, port: {{ .Values.fetchMcp.port }} }
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-from-helm-tests
+  labels:
+    {{- include "mcp-servers.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchExpressions:
+      - { key: app.kubernetes.io/component, operator: In, values: [woo-mcp, fx-mcp, fetch-mcp] }
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/component: test
+{{- end }}

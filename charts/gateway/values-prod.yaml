@@ -54,3 +54,7 @@ postgres:
     limits:
       cpu: "2"
       memory: 1Gi
+
+# Step 17: NetworkPolicy on (decision 7).
+networkPolicy:
+  enabled: true

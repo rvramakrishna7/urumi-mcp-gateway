@@ -1,6 +1,6 @@
 {{- /*
 ClusterIP only, and there is no Ingress in this chart: woo-mcp is reachable from inside the cluster only.
-A NetworkPolicy that limits the callers to the gateway namespace is added in the security step (decision 7).
+With networkPolicy.enabled, templates/networkpolicy.yaml limits the callers to the gateway pod of the gateway namespace (decision 7).
 */ -}}
 apiVersion: v1
 kind: Service
