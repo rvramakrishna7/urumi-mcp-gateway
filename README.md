@@ -393,3 +393,16 @@ rm fetch-token.txt
 ```
 
 The drill prints one line per target (names and verdicts, never the token or a fetched body). The script header explains the `--expect-open` flag, which is for a container started with `--allow-private-ips`.
+
+## Network isolation (NetworkPolicy)
+
+With `networkPolicy.enabled: true` (set in `charts/gateway/values-local.yaml`, `charts/gateway/values-prod.yaml`, `charts/mcp-servers/values-local.yaml` and `charts/mcp-servers/values-prod.yaml`) the `gateway` and `mcp-servers` namespaces start from a default deny, and each connection that is needed has its own allow rule.
+
+- **Reachable from outside the cluster:** the storefront, and the gateway and the dashboard at `gateway.urumi.test`, both through Traefik.
+- **Internal only:** woo-mcp, fx-mcp and fetch-mcp accept connections from the gateway pod only. PostgreSQL accepts the gateway pod only. The `store` namespace (WordPress and MariaDB) has no NetworkPolicy yet.
+
+```bash
+kubectl get networkpolicy -A
+```
+
+The policies, the drills that prove them (with a positive control for each), the results of 17 October 2026 on the local k3d cluster, the commands to run them again and the known limitations are in [docs/network-policy.md](docs/network-policy.md).

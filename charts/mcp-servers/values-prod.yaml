@@ -40,7 +40,7 @@ fxMcp:
     pullPolicy: IfNotPresent
   imagePullSecrets:
     - registry-credentials
-  # fx-mcp needs egress to api.frankfurter.dev. The NetworkPolicy of Step 17 must allow it.
+  # fx-mcp needs egress to api.frankfurter.dev. The NetworkPolicy (networkPolicy.enabled) allows ports 80 and 443 to the public internet.
   resources:
     requests:
       cpu: 100m
@@ -63,3 +63,7 @@ fetchMcp:
     limits:
       cpu: "1"
       memory: 768Mi
+
+# Step 17: NetworkPolicy on (decision 7).
+networkPolicy:
+  enabled: true

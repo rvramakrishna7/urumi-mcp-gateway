@@ -13,3 +13,7 @@ bootstrap:
 postgres:
   persistence:
     size: 2Gi
+
+# Step 17: NetworkPolicy on (decision 7).
+networkPolicy:
+  enabled: true

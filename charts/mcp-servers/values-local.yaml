@@ -9,3 +9,7 @@ wooMcp:
     # and store.scheme in charts/store/values-local.yaml.
     publicUrl: http://store.urumi.test
     timezone: Asia/Kolkata
+
+# Step 17: NetworkPolicy on (decision 7).
+networkPolicy:
+  enabled: true
