@@ -187,7 +187,7 @@ helm test gateway -n gateway
 kubectl logs -n gateway pod/gateway-checks
 ```
 
-The release has PostgreSQL (a StatefulSet with a persistent volume) and the gateway Deployment. A `migrate` initContainer creates the schema before the server starts. The test pod prints PASS lines (names and counts only): the database, the migrations, the tables, the seeded server `woo` with an encrypted credential, and the public routes. The Ingress routes only `/mcp`, `/healthz`, `/api/admin`, `/api/auth`, `/api/me` and `/api/audit`: `curl -i http://gateway.urumi.test/readyz` answers 404 on purpose. The values file `values-local.yaml` sets `bootstrap.adminEmail`, so the install also makes the Secret `gateway-bootstrap` (one random invite token) and the gateway creates that admin at start, without a password.
+The release has PostgreSQL (a StatefulSet with a persistent volume) and the gateway Deployment. A `migrate` initContainer creates the schema before the server starts. The test pod prints PASS lines (names and counts only): the database, the migrations, the tables, the seeded server `woo` with an encrypted credential, and the public routes. The Ingress routes only `/mcp`, `/healthz`, `/api/admin`, `/api/auth`, `/api/me`, `/api/audit` and `/api/chat`: `curl -i http://gateway.urumi.test/readyz` answers 404 on purpose. The values file `values-local.yaml` sets `bootstrap.adminEmail`, so the install also makes the Secret `gateway-bootstrap` (one random invite token) and the gateway creates that admin at start, without a password.
 
 ### 2. Set the password of the first admin, then create users and keys
 
@@ -303,7 +303,7 @@ The admin actions (invite, disable, revoke) are written to the gateway log (ids 
 
 ### 6. Read the audit log
 
-Every tool call has a row, written before the call and finished after it, whether it came from an external client (`via` is `mcp`) or (later) the chat agent (`via` is `chat`). The dashboard reads the rows through `GET /api/audit`. The route takes the **session cookie only** (an API key is 401), and the scope is applied in the SQL: an **admin** sees every row, a **member** sees only their own rows, and a member who sends `userId` gets 400. Arguments and results are never stored, so they cannot be returned.
+Every tool call has a row, written before the call and finished after it, whether it came from an external client (`via` is `mcp`) or the chat agent (`via` is `chat`). The dashboard reads the rows through `GET /api/audit`. The route takes the **session cookie only** (an API key is 401), and the scope is applied in the SQL: an **admin** sees every row, a **member** sees only their own rows, and a member who sends `userId` gets 400. Arguments and results are never stored, so they cannot be returned.
 
 | Parameter | Meaning |
 |---|---|
@@ -326,3 +326,22 @@ You can still read the table directly:
 ```bash
 kubectl exec -n gateway postgres-0 -- sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "SELECT ts, user_email, via, server_slug, tool, outcome, error_kind, duration_ms FROM audit_log ORDER BY id DESC LIMIT 10"'
 ```
+
+### 7. Chat agent
+
+The dashboard has a chat screen at `http://gateway.urumi.test/chat` (the "Chat" link, first on the home page; any signed-in user, admin or member). The agent is a module of the gateway process. It acts as the signed-in user, calls tools only through the gateway core (the same path as `/mcp`: routing, the disabled-server check, timeouts and the audit), and its calls are audited with `via` = `chat` under that user. The conversation is kept in the browser page only and is lost on reload; the gateway stores no prompts and no answers.
+
+The model is Groq (`chat.model`, default `openai/gpt-oss-120b`). The key is **not** a chart value. Create the Secret `gateway-groq` by hand; the command reads the key without echoing it, keeps it out of the shell history and out of the process arguments:
+
+```bash
+read -rsp "Groq API key: " GROQ_KEY; echo
+printf 'apiVersion: v1\nkind: Secret\nmetadata:\n  name: gateway-groq\n  namespace: gateway\ntype: Opaque\ndata:\n  key: %s\n' "$(printf %s "$GROQ_KEY" | base64 -w0)" | kubectl create -f -
+unset GROQ_KEY
+kubectl rollout restart deploy/gateway -n gateway
+```
+
+The Secret is optional in the chart: without it the gateway starts normally and `POST /api/chat` answers 503 (the screen says the assistant is not set up). The key is read once at start, so a new key needs the restart above. To rotate it, delete the Secret, create it again and restart.
+
+Writes need a confirmation. The tools in `chat.confirmTools` (default `woo__create_product` and `woo__update_order_status`) never run on the model's request alone: the screen shows a card with the tool and its arguments, and the change runs only after **Run**. The server checks a signed, 5-minute token bound to the user, the tool and the arguments, so posting to the route directly does not skip the card. **Cancel** sends nothing. If a Run fails in a way that may have run the change (a lost connection, a 500), the card is removed and the screen says to check the audit log before repeating it.
+
+A user can send `chat.ratePerMinute` requests per minute (default 10; over it the gateway answers 429 and the screen shows a countdown). Groq has its own limits: rapid successive turns can end in "The model service is busy" (see the known limitations in `docs/architecture.md`).

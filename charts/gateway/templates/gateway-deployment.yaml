@@ -94,6 +94,16 @@ spec:
             # the session cookie is Secure.
             - name: PUBLIC_ORIGIN
               value: {{ printf "%s://%s" (required "ingress.scheme is required" .Values.ingress.scheme) .Values.ingress.host | quote }}
+            # The chat agent (decision 40). The Groq key is a file from the optional Secret gateway-groq; without it the chat
+            # endpoint answers 503 and the rest of the gateway is unchanged. The file is read at start, so a new key needs a restart.
+            - name: GROQ_API_KEY_FILE
+              value: /secrets/groq/key
+            - name: CHAT_MODEL
+              value: {{ .Values.chat.model | quote }}
+            - name: CHAT_CONFIRM_TOOLS
+              value: {{ required "chat.confirmTools must name at least one tool" (join "," .Values.chat.confirmTools) | quote }}
+            - name: CHAT_RATE_PER_MINUTE
+              value: {{ .Values.chat.ratePerMinute | quote }}
             {{- include "gateway.dbEnv" . | nindent 12 }}
           # Liveness never calls the database or an upstream. Readiness calls the database (the gateway cannot
           # serve without it) and never an upstream: a slow or dead upstream must not take the gateway out of the
@@ -136,6 +146,9 @@ spec:
               mountPath: /secrets/bootstrap
               readOnly: true
             {{- end }}
+            - name: groq-key
+              mountPath: /secrets/groq
+              readOnly: true
             - name: seed-config
               mountPath: /config/seed
               readOnly: true
@@ -161,6 +174,16 @@ spec:
               - key: inviteToken
                 path: inviteToken
         {{- end }}
+        # Created by hand, never by this chart (the key must not pass through Helm values or the release metadata).
+        # optional: the pod starts without it and chat is then off.
+        - name: groq-key
+          secret:
+            secretName: gateway-groq
+            optional: true
+            defaultMode: 0440
+            items:
+              - key: key
+                path: key
         - name: seed-config
           configMap:
             name: {{ include "gateway.seedConfigName" . }}

@@ -1,7 +1,7 @@
 {{- /*
-The only public door. Six exact prefixes go to the gateway (see the list below), so a path that the gateway might gain later
+The only public door. Seven exact prefixes go to the gateway (see the list below), so a path that the gateway might gain later
 is not exposed by accident. Every other path goes to the dashboard, which serves static files only and answers 404 for /api and /mcp.
-Traefik takes the longest matching path first, so the six prefixes win over "/". /readyz is not routed: the kubelet probes the pod directly, and the readiness
+Traefik takes the longest matching path first, so the seven prefixes win over "/". /readyz is not routed: the kubelet probes the pod directly, and the readiness
 answer says nothing that an outside caller needs. Traefik passes the original Host header on, and /mcp checks it
 against ingress.host (ALLOWED_HOSTS). PostgreSQL has no Ingress.
 */ -}}
@@ -19,7 +19,7 @@ spec:
     - host: {{ required "ingress.host is required" .Values.ingress.host | quote }}
       http:
         paths:
-          {{- range list "/mcp" "/healthz" "/api/admin" "/api/auth" "/api/me" "/api/audit" }}
+          {{- range list "/mcp" "/healthz" "/api/admin" "/api/auth" "/api/me" "/api/audit" "/api/chat" }}
           - path: {{ . }}
             pathType: Prefix
             backend:
