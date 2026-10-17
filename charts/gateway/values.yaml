@@ -6,7 +6,7 @@ gateway:
   image:
     repository: gateway
     # Pinned to an exact version. Never use latest.
-    tag: "0.10.0"
+    tag: "0.11.0"
     pullPolicy: IfNotPresent
   # Names of Secrets (of type kubernetes.io/dockerconfigjson) that hold registry credentials. Empty for the
   # local cluster, where the image is imported with "k3d image import".
@@ -84,6 +84,12 @@ security:
     - woo__create_product
     - woo__update_order_status
     - fetch__fetch
+  # The only upstream addresses that an admin can register (SSRF guard). Exact host:port, no wildcards, no IP literals.
+  # Adding a new upstream needs a helm upgrade. An empty list is refused.
+  upstreamAllowedHosts:
+    - woo-mcp.mcp-servers.svc.cluster.local:8080
+    - fx-mcp.mcp-servers.svc.cluster.local:8080
+    - fetch-mcp.mcp-servers.svc.cluster.local:8080
 
 # Servers that the install registers once (decision 31). The values hold no secret: a credential names the Secret that
 # holds the value, and the chart copies it with lookup.

@@ -1,6 +1,8 @@
 import { readFileSync } from 'node:fs';
 import { z } from 'zod';
 import { SLUG } from './registry/validation.ts';
+import { parseUpstreamPolicy, UpstreamPolicyError } from './upstream/ssrf.ts';
+import type { UpstreamPolicy } from './upstream/ssrf.ts';
 
 export interface DbConfig {
   host: string;
@@ -211,4 +213,27 @@ export function loadAccessConfig(env: NodeJS.ProcessEnv = process.env): AccessCo
     }
   }
   return { memberRestrictedTools };
+}
+
+export interface UpstreamPolicyConfig {
+  policy: UpstreamPolicy;
+  // The namespace of this pod. Names inside it (PostgreSQL) can never be an upstream.
+  ownNamespace: string;
+}
+
+const upstreamPolicySchema = z.object({
+  UPSTREAM_ALLOWED_HOSTS: z.string().min(1),
+  POD_NAMESPACE: z.string().regex(/^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$/),
+});
+
+export function loadUpstreamPolicyConfig(env: NodeJS.ProcessEnv = process.env): UpstreamPolicyConfig {
+  const parsed = upstreamPolicySchema.safeParse(env);
+  if (!parsed.success) throw invalid(parsed.error);
+  try {
+    return { policy: parseUpstreamPolicy(parsed.data.UPSTREAM_ALLOWED_HOSTS, parsed.data.POD_NAMESPACE), ownNamespace: parsed.data.POD_NAMESPACE };
+  } catch (error) {
+    // The message of an UpstreamPolicyError names the position of the entry and the problem, never a value.
+    if (error instanceof UpstreamPolicyError) throw new ConfigError(`invalid or missing configuration: UPSTREAM_ALLOWED_HOSTS (${error.message})`);
+    throw error;
+  }
 }

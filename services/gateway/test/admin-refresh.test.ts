@@ -1,5 +1,6 @@
 import { after, before, beforeEach, describe, test } from 'node:test';
 import assert from 'node:assert/strict';
+import { TEST_UPSTREAM } from './helpers/upstream-policy.ts';
 import { randomBytes } from 'node:crypto';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import type { Server } from 'node:http';
@@ -57,7 +58,7 @@ describe('admin API: refresh after a server change (needs PostgreSQL)', { skip: 
     const { app } = createApp({
       logger,
       checkDatabase: async () => {},
-      admin: { db: pool, keyring, logger, onServerChanged: () => { calls += 1; return behaviour(); } },
+      admin: { db: pool, keyring, logger, upstream: TEST_UPSTREAM, onServerChanged: () => { calls += 1; return behaviour(); } },
     });
     server = await new Promise<Server>((resolve) => {
       const instance = app.listen(0, '127.0.0.1', () => resolve(instance));

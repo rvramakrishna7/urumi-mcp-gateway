@@ -1,5 +1,6 @@
 import { after, before, describe, test } from 'node:test';
 import assert from 'node:assert/strict';
+import { TEST_UPSTREAM } from './helpers/upstream-policy.ts';
 import { createHash, randomBytes } from 'node:crypto';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import type { Server } from 'node:http';
@@ -59,7 +60,7 @@ describe('admin API: cached tool names (needs PostgreSQL)', { skip: skipWithoutD
     await replaceTools(pool, off.id, { accepted: [accepted('ping')], skipped: [], note: null });
 
     const logger = createLogger(() => {});
-    const { app } = createApp({ logger, checkDatabase: async () => {}, admin: { db: pool, keyring, logger } });
+    const { app } = createApp({ logger, checkDatabase: async () => {}, admin: { db: pool, keyring, logger, upstream: TEST_UPSTREAM } });
     server = await new Promise<Server>((resolve) => {
       const instance = app.listen(0, '127.0.0.1', () => resolve(instance));
     });

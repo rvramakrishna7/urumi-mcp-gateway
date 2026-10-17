@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { ConfigError, loadConfig, loadDbConfig, loadSecurityConfig } from '../src/config.ts';
+import { ConfigError, loadConfig, loadDbConfig, loadSecurityConfig, loadUpstreamPolicyConfig } from '../src/config.ts';
 
 describe('loadConfig and loadDbConfig', () => {
   let dir: string;
@@ -173,6 +173,54 @@ describe('loadSecurityConfig: ALLOWED_HOSTS', () => {
   test('is required: a missing, empty or blank list stops the start instead of turning the Host check off', () => {
     for (const value of [undefined, '', ' , ']) {
       assert.throws(() => loadSecurityConfig(env({ ALLOWED_HOSTS: value })), (error: unknown) => error instanceof ConfigError && error.message.includes('ALLOWED_HOSTS'));
+    }
+  });
+});
+
+describe('loadUpstreamPolicyConfig', () => {
+  const THREE = 'woo-mcp.mcp-servers.svc.cluster.local:8080,fx-mcp.mcp-servers.svc.cluster.local:8080,fetch-mcp.mcp-servers.svc.cluster.local:8080';
+  const env = (overrides: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv => ({ UPSTREAM_ALLOWED_HOSTS: THREE, POD_NAMESPACE: 'gateway', ...overrides });
+
+  test('the three real entries give a policy of 3 and the own namespace', () => {
+    const config = loadUpstreamPolicyConfig(env());
+    assert.equal(config.policy.allowed.size, 3);
+    assert.equal(config.policy.allowed.has('woo-mcp.mcp-servers.svc.cluster.local:8080'), true);
+    assert.equal(config.ownNamespace, 'gateway');
+  });
+
+  test('a missing or empty UPSTREAM_ALLOWED_HOSTS stops the start and names the variable', () => {
+    for (const value of [undefined, '', ' , ']) {
+      assert.throws(() => loadUpstreamPolicyConfig(env({ UPSTREAM_ALLOWED_HOSTS: value })), (error: unknown) => error instanceof ConfigError && error.message.includes('UPSTREAM_ALLOWED_HOSTS'), String(value));
+    }
+  });
+
+  test('a bad entry stops the start, and the message holds the position and not the value', () => {
+    const value = `${THREE},10.43.0.1:8080`;
+    assert.throws(() => loadUpstreamPolicyConfig(env({ UPSTREAM_ALLOWED_HOSTS: value })), (error: unknown) => {
+      assert.ok(error instanceof ConfigError);
+      assert.ok(error.message.includes('UPSTREAM_ALLOWED_HOSTS'));
+      assert.ok(error.message.includes('entry 4'));
+      assert.ok(!error.message.includes('10.43.0.1'));
+      assert.ok(!error.message.includes(value));
+      return true;
+    });
+  });
+
+  test('a missing, empty or malformed POD_NAMESPACE stops the start and names the variable', () => {
+    for (const value of [undefined, '', 'Gate way', '-gateway', 'a'.repeat(64)]) {
+      assert.throws(() => loadUpstreamPolicyConfig(env({ POD_NAMESPACE: value })), (error: unknown) => error instanceof ConfigError && error.message.includes('POD_NAMESPACE'), String(value));
+    }
+  });
+
+  test('an entry inside the own namespace is refused, so POD_NAMESPACE really is used', () => {
+    assert.throws(() => loadUpstreamPolicyConfig(env({ UPSTREAM_ALLOWED_HOSTS: 'postgres.gateway.svc.cluster.local:5432' })), ConfigError);
+    assert.equal(loadUpstreamPolicyConfig(env({ UPSTREAM_ALLOWED_HOSTS: 'postgres.gateway.svc.cluster.local:5432', POD_NAMESPACE: 'other' })).policy.allowed.size, 1);
+  });
+
+  test('no message contains the raw value', () => {
+    const secretish = 'marker-9f3a.example.com:99999';
+    for (const overrides of [{ UPSTREAM_ALLOWED_HOSTS: secretish }, { UPSTREAM_ALLOWED_HOSTS: `${THREE},${secretish}` }, { POD_NAMESPACE: 'marker_9f3a' }]) {
+      assert.throws(() => loadUpstreamPolicyConfig(env(overrides)), (error: unknown) => error instanceof ConfigError && !error.message.includes('marker') && !error.message.includes('9f3a'));
     }
   });
 });

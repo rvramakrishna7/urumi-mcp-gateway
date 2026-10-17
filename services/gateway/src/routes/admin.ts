@@ -9,11 +9,15 @@ import { deleteServer, getServer, insertServer, listServers, patchServer, Regist
 import { listToolNamesByServer } from '../upstream/tools-repository.ts';
 import { createAdminUsersRouter } from './admin-users.ts';
 import { createServerSchema, describeIssues, patchServerSchema } from '../registry/validation.ts';
+import type { UpstreamPolicyConfig } from '../config.ts';
+import { checkUpstreamUrl } from '../upstream/ssrf.ts';
 
 export interface AdminDeps {
   db: Database;
   keyring: Keyring;
   logger: Logger;
+  // The addresses an admin may register (SSRF guard). Required: there is no way to run the admin API without it.
+  upstream: UpstreamPolicyConfig;
   now?: () => number;
   // When set, a dashboard session is accepted as well as an API key. Left out in tests of the API key only.
   sessions?: SessionAuthConfig;
@@ -36,7 +40,16 @@ function fail(res: Response, error: unknown, logger: Logger): void {
 
 // The admin API of the registry. Every route needs an API key or a session (401) and the admin role (403). The body is
 // parsed only after both checks, so an unauthenticated caller cannot make the gateway parse anything.
-export function createAdminRouter({ db, keyring, logger, now, sessions, onServerChanged }: AdminDeps): express.Router {
+export function createAdminRouter({ db, keyring, logger, upstream, now, sessions, onServerChanged }: AdminDeps): express.Router {
+  // True when the address is not allowed; the 400 has then been sent. The log and the answer carry the reason code only,
+  // never the URL, the host or the port.
+  const refuseUrl = (res: Response, url: string): boolean => {
+    const verdict = checkUpstreamUrl(upstream.policy, upstream.ownNamespace, url);
+    if (verdict.ok) return false;
+    logger.warn('server url refused', { by: identityOf(res).userId, reason: verdict.reason });
+    res.status(400).json({ error: 'invalid request', issues: [{ field: 'url', problem: 'url_blocked', reason: verdict.reason }] });
+    return true;
+  };
   // Starts the refresh and returns at once. A rejection (or a throw) is logged here: nobody awaits it, and an unhandled
   // rejection would stop the process.
   const refreshInBackground = (): void => {
@@ -87,6 +100,7 @@ export function createAdminRouter({ db, keyring, logger, now, sessions, onServer
       res.status(400).json({ error: 'invalid request', issues: describeIssues(parsed.error) });
       return;
     }
+    if (refuseUrl(res, parsed.data.url)) return;
     try {
       const server = await insertServer(db, keyring, parsed.data, { createdBy: identityOf(res).userId, seedManaged: false });
       logger.info('server registered', { slug: server.slug, by: identityOf(res).email });
@@ -107,6 +121,7 @@ export function createAdminRouter({ db, keyring, logger, now, sessions, onServer
       res.status(400).json({ error: 'invalid request', issues: describeIssues(parsed.error) });
       return;
     }
+    if (parsed.data.url !== undefined && refuseUrl(res, parsed.data.url)) return;
     try {
       const server = await patchServer(db, keyring, req.params.id, parsed.data);
       // Field names only, never values.

@@ -1,5 +1,5 @@
 # Overrides for the local k3d cluster (cluster/k3d-config.yaml).
-# The images must be imported first: k3d image import gateway:0.10.0 dashboard:0.7.0 -c urumi
+# The images must be imported first: k3d image import gateway:0.11.0 dashboard:0.7.0 -c urumi
 # Use with: helm upgrade --install gateway charts/gateway -n gateway --create-namespace -f charts/gateway/values-local.yaml
 
 # The host is mapped to 127.0.0.1 in the Windows hosts file (decision 8).
