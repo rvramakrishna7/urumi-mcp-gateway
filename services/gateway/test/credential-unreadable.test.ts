@@ -51,7 +51,7 @@ describe('an upstream credential that cannot be decrypted (needs PostgreSQL)', {
     pool = db.pool();
     const user = await createUser(pool, 'member@example.com', 'member');
     await createApiKey(pool, 'member@example.com', 'member key');
-    member = { userId: user.id, email: user.email, via: 'mcp' };
+    member = { userId: user.id, email: user.email, role: 'member', via: 'mcp' };
 
     locked = await startFake({ token: TOKEN, tools: [{ name: 'ping', description: 'ping', inputSchema: schema }] });
     fine = await startFake({ tools: [{ name: 'ping', description: 'ping', inputSchema: schema }] });

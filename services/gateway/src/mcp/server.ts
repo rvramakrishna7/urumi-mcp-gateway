@@ -7,18 +7,19 @@ export const SERVER_NAME = 'urumi-mcp-gateway';
 
 // The identity of the caller travels in AuthInfo.extra. The user's API key is never put in AuthInfo: the SDK would
 // carry it into its own request context, and nothing below this point needs it.
-export function authInfoFor(identity: { keyId: string; userId: string; email: string }): AuthInfo {
-  return { token: '', clientId: identity.userId, scopes: [], extra: { userId: identity.userId, email: identity.email } };
+export function authInfoFor(identity: { keyId: string; userId: string; email: string; role: Caller['role'] }): AuthInfo {
+  return { token: '', clientId: identity.userId, scopes: [], extra: { userId: identity.userId, email: identity.email, role: identity.role } };
 }
 
 function callerOf(authInfo: AuthInfo | undefined): Caller {
   const extra = authInfo?.extra;
   const userId = typeof extra?.userId === 'string' ? extra.userId : null;
   const email = typeof extra?.email === 'string' ? extra.email : null;
+  const role = extra?.role === 'admin' || extra?.role === 'member' ? extra.role : null;
   // The router authenticates before it calls the handler. A missing identity here is a programming error, and the
   // request must fail instead of running as nobody.
-  if (!userId || !email) throw new Error('no authenticated caller');
-  return { userId, email, via: 'mcp' };
+  if (!userId || !email || !role) throw new Error('no authenticated caller');
+  return { userId, email, role, via: 'mcp' };
 }
 
 // A new low-level Server for every request (stateless). The tool list depends on the registry at that moment, so

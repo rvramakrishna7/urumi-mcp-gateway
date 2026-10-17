@@ -1,6 +1,6 @@
 import { createApp } from './app.ts';
-import { ConfigError, loadChatConfig, loadConfig, loadSecurityConfig } from './config.ts';
-import type { ChatConfig, Config, SecurityConfig } from './config.ts';
+import { ConfigError, loadAccessConfig, loadChatConfig, loadConfig, loadSecurityConfig } from './config.ts';
+import type { AccessConfig, ChatConfig, Config, SecurityConfig } from './config.ts';
 import { CryptoError, loadKeyring } from './crypto/credentials.ts';
 import type { Keyring } from './crypto/credentials.ts';
 import { checkDatabase, createPool } from './db/pool.ts';
@@ -23,11 +23,13 @@ const logger = createLogger();
 let config: Config;
 let security: SecurityConfig;
 let chatConfig: ChatConfig;
+let accessConfig: AccessConfig;
 let keyring: Keyring;
 try {
   config = loadConfig();
   security = loadSecurityConfig();
   chatConfig = loadChatConfig();
+  accessConfig = loadAccessConfig();
   // The master key must be exactly 32 bytes. A wrong or missing key stops the start with a clear reason.
   keyring = loadKeyring(security.masterKeyFile, security.masterKeyId);
 } catch (error) {
@@ -61,7 +63,8 @@ try {
   process.exit(1);
 }
 
-const gateway = createGateway({ db: pool, keyring, logger });
+const gateway = createGateway({ db: pool, keyring, logger, memberRestrictedTools: accessConfig.memberRestrictedTools });
+logger.info('access', { memberRestrictedTools: accessConfig.memberRestrictedTools.length });
 const poller = createPoller({ db: pool, keyring, logger });
 
 const mcp = createMcpRouter({ db: pool, gateway, logger, allowedHosts: security.allowedHosts });

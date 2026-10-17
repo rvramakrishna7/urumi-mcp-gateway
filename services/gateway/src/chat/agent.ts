@@ -12,6 +12,7 @@ import type { ChatMessage, GroqClient, GroqTool, GroqToolCall } from './groq.ts'
 export interface ChatIdentity {
   userId: string;
   email: string;
+  role: Caller['role'];
 }
 
 export interface UserTurnMessage {
@@ -49,7 +50,7 @@ export const DEFAULT_AGENT_LIMITS: AgentLimits = { maxRounds: 5, deadlineMs: 45_
 export class InvalidConfirmationError extends Error {}
 
 export interface AgentDeps {
-  gateway: Pick<Gateway, 'listTools' | 'callTool'>;
+  gateway: Pick<Gateway, 'listTools' | 'callTool' | 'rejectToolCall'>;
   groq: Pick<GroqClient, 'complete'>;
   keyring: Keyring;
   logger: Logger;
@@ -116,16 +117,20 @@ function toGroqTools(tools: ListedTool[]): GroqTool[] {
 export function createAgent({ gateway, groq, keyring, logger, confirmTools, limits = DEFAULT_AGENT_LIMITS, now = Date.now }: AgentDeps): Agent {
   async function runTurn(identity: ChatIdentity, history: UserTurnMessage[], confirm?: { token: unknown; name: string; args: unknown }): Promise<TurnResult> {
     // via is fixed here. Nothing from the request decides it, and nothing from the request decides the user.
-    const caller: Caller = { userId: identity.userId, email: identity.email, via: 'chat' };
+    const caller: Caller = { userId: identity.userId, email: identity.email, role: identity.role, via: 'chat' };
     const startedAt = now();
     const deadline = startedAt + limits.deadlineMs;
     const toolCalls: ToolCallSummary[] = [];
+
+    // The names that this turn offered to the model. A name outside it never runs, whatever the model or the confirmation says.
+    const offered = new Set<string>();
 
     async function execute(name: string, args: Record<string, unknown>): Promise<string> {
       const began = process.hrtime.bigint();
       let result: ToolResult;
       try {
-        result = await gateway.callTool(caller, name, args);
+        // A name that was not offered is recorded and refused by the gateway: no credential is read, no upstream is called.
+        result = offered.has(name) ? await gateway.callTool(caller, name, args) : await gateway.rejectToolCall(caller, name, 'not_offered');
       } catch (error) {
         // callTool returns its failures as results. A throw is a bug in the gateway; the model gets a fixed sentence.
         logger.error('chat tool call threw', { errorName: error instanceof Error ? error.name : 'unknown' });
@@ -136,6 +141,7 @@ export function createAgent({ gateway, groq, keyring, logger, confirmTools, limi
     }
 
     const tools = toGroqTools(await gateway.listTools(caller));
+    for (const tool of tools) offered.add(tool.function.name);
     const messages: ChatMessage[] = [{ role: 'system', content: systemPrompt(new Date(startedAt).toISOString().slice(0, 10)) }, ...history];
 
     // A confirmed call runs first, then the loop goes on so that the model can report the result.
@@ -191,7 +197,8 @@ export function createAgent({ gateway, groq, keyring, logger, confirmTools, limi
         continue;
       }
 
-      if (requiresConfirmation(call.function.name, confirmTools)) {
+      // A name that was not offered gets no confirmation card: it goes to execute(), which refuses it.
+      if (offered.has(call.function.name) && requiresConfirmation(call.function.name, confirmTools)) {
         const token = issueConfirmToken(keyring, { userId: identity.userId, name: call.function.name, args });
         return { reply: completion.message.content?.trim() ?? '', toolCalls, pending: { token, name: call.function.name, args } };
       }

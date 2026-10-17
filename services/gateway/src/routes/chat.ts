@@ -84,7 +84,7 @@ export function createChatRouter({ db, logger, sessions, agent, ratePerMinute, n
 
     const startedAt = Date.now();
     try {
-      const result = await agent.runTurn({ userId: identity.userId, email: identity.email }, parsed.data.messages, parsed.data.confirm);
+      const result = await agent.runTurn({ userId: identity.userId, email: identity.email, role: identity.role }, parsed.data.messages, parsed.data.confirm);
       logger.info('chat turn', { userId: identity.userId, toolCalls: result.toolCalls.length, pending: result.pending !== undefined, durationMs: Date.now() - startedAt });
       res.json({ reply: result.reply, toolCalls: result.toolCalls, ...(result.pending ? { pending: result.pending } : {}) });
     } catch (error) {
