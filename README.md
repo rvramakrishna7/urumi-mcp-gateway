@@ -176,8 +176,8 @@ The gateway keeps the list of upstream MCP servers, offers one public MCP endpoi
 ### 1. Build the image and install the chart
 
 ```bash
-docker build -t gateway:0.10.0 services/gateway
-k3d image import gateway:0.10.0 -c urumi
+docker build -t gateway:0.11.0 services/gateway
+k3d image import gateway:0.11.0 -c urumi
 
 helm upgrade --install gateway charts/gateway \
   --namespace gateway --create-namespace \
@@ -190,6 +190,8 @@ kubectl logs -n gateway pod/gateway-checks
 The release has PostgreSQL (a StatefulSet with a persistent volume) and the gateway Deployment. A `migrate` initContainer creates the schema before the server starts. The test pod prints PASS lines (names and counts only): the database, the migrations, the tables, the seeded server `woo` with an encrypted credential, and the public routes. The Ingress routes only `/mcp`, `/healthz`, `/api/admin`, `/api/auth`, `/api/me`, `/api/audit` and `/api/chat`: `curl -i http://gateway.urumi.test/readyz` answers 404 on purpose. The values file `values-local.yaml` sets `bootstrap.adminEmail`, so the install also makes the Secret `gateway-bootstrap` (one random invite token) and the gateway creates that admin at start, without a password.
 
 **Tool permissions.** Members cannot list or call the tools in `security.memberRestrictedTools` of `charts/gateway/values.yaml` (default `woo__create_product`, `woo__update_order_status`, `fetch__fetch`); admins can. Change the list in a values file and run the `helm upgrade` above. It must not be empty. Rendering the chart without a cluster (`helm template`, `helm lint`) needs `--set seed.requireExisting=false`, because the chart looks up the upstream Secrets with `lookup`.
+
+**Upstream address allowlist.** An admin can register an upstream server only at an address in `security.upstreamAllowedHosts` of `charts/gateway/values.yaml` (default: `woo-mcp`, `fx-mcp` and `fetch-mcp` on `mcp-servers.svc.cluster.local:8080`). Each entry is exactly `host:port`: no wildcards, no IP addresses, and the list must not be empty. Any other address, an IP address, `localhost`, the Kubernetes API, or a name inside the gateway's own namespace is refused with `400` (`url_blocked` and a reason code), on create, on edit and in the install seed. To add a new upstream, add its `host:port` to `security.upstreamAllowedHosts` in your values file and run the `helm upgrade` above, then register it in the dashboard. The check runs when a server is registered, not on every connection (see the known limitations in `docs/architecture.md`, decision 44).
 
 ### 2. Set the password of the first admin, then create users and keys
 

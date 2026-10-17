@@ -1,5 +1,6 @@
 import { after, before, beforeEach, describe, test } from 'node:test';
 import assert from 'node:assert/strict';
+import { TEST_UPSTREAM } from './helpers/upstream-policy.ts';
 import { randomBytes } from 'node:crypto';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -54,7 +55,7 @@ describe('install seed (needs PostgreSQL)', { skip: skipWithoutDb }, () => {
   });
 
   test('inserts the server with an encrypted, decryptable credential and marks it seed managed', async () => {
-    const actions = await applySeed(pool, keyring, seedWith('seed-token-aaaaaaaa'), logger);
+    const actions = await applySeed(pool, keyring, seedWith('seed-token-aaaaaaaa'), logger, TEST_UPSTREAM);
     assert.deepEqual(actions, { woo: 'inserted' });
     const server = await getServerBySlug(pool, 'woo');
     assert.equal(server?.credential.set, true);
@@ -65,33 +66,33 @@ describe('install seed (needs PostgreSQL)', { skip: skipWithoutDb }, () => {
   });
 
   test('a second start changes nothing: same row, same ciphertext, same updated_at', async () => {
-    await applySeed(pool, keyring, seedWith('seed-token-aaaaaaaa'), logger);
+    await applySeed(pool, keyring, seedWith('seed-token-aaaaaaaa'), logger, TEST_UPSTREAM);
     const before = await state();
-    const actions = await applySeed(pool, keyring, seedWith('seed-token-aaaaaaaa'), logger);
+    const actions = await applySeed(pool, keyring, seedWith('seed-token-aaaaaaaa'), logger, TEST_UPSTREAM);
     assert.deepEqual(actions, { woo: 'unchanged' });
     assert.deepEqual(await state(), before);
   });
 
   test('a rotated token and a new url follow the seed while the row is seed managed', async () => {
-    await applySeed(pool, keyring, seedWith('seed-token-aaaaaaaa'), logger);
+    await applySeed(pool, keyring, seedWith('seed-token-aaaaaaaa'), logger, TEST_UPSTREAM);
     const id = (await state()).id;
-    const actions = await applySeed(pool, keyring, seedWith('seed-token-bbbbbbbb', 'http://woo-mcp:9090/mcp'), logger);
+    const actions = await applySeed(pool, keyring, seedWith('seed-token-bbbbbbbb', 'http://woo-mcp.mcp-servers.svc.cluster.local:9090/mcp'), logger, TEST_UPSTREAM);
     assert.deepEqual(actions, { woo: 'synced' });
     assert.equal((await readCredential(pool, keyring, id))?.value, 'seed-token-bbbbbbbb');
-    assert.equal((await state()).url, 'http://woo-mcp:9090/mcp');
+    assert.equal((await state()).url, 'http://woo-mcp.mcp-servers.svc.cluster.local:9090/mcp');
     assert.equal((await state()).seed_managed, true);
   });
 
   test('a stored credential that the master key cannot decrypt is replaced from the seed, and the start does not fail', async () => {
     writeFileSync(join(dir, 'other-master'), randomBytes(32).toString('base64'));
     const otherKeyring = loadKeyring(join(dir, 'other-master'), 'k9');
-    await applySeed(pool, otherKeyring, seedWith('seed-token-aaaaaaaa'), logger);
+    await applySeed(pool, otherKeyring, seedWith('seed-token-aaaaaaaa'), logger, TEST_UPSTREAM);
     const id = (await state()).id;
     await assert.rejects(() => readCredential(pool, keyring, id), 'the current key cannot read the row');
     await patchServer(pool, keyring, id, { enabled: false });
 
     const start = logLines.length;
-    const actions = await applySeed(pool, keyring, seedWith('seed-token-aaaaaaaa'), logger);
+    const actions = await applySeed(pool, keyring, seedWith('seed-token-aaaaaaaa'), logger, TEST_UPSTREAM);
     assert.deepEqual(actions, { woo: 'synced' });
     assert.equal((await readCredential(pool, keyring, id))?.value, 'seed-token-aaaaaaaa');
     assert.equal((await state()).enabled, false, 'the repair does not touch enabled');
@@ -106,14 +107,14 @@ describe('install seed (needs PostgreSQL)', { skip: skipWithoutDb }, () => {
   });
 
   test('the seed never writes enabled: a server that an admin disabled stays disabled across restarts', async () => {
-    await applySeed(pool, keyring, seedWith('seed-token-aaaaaaaa'), logger);
+    await applySeed(pool, keyring, seedWith('seed-token-aaaaaaaa'), logger, TEST_UPSTREAM);
     const id = (await state()).id;
     await patchServer(pool, keyring, id, { enabled: false });
     assert.equal((await state()).seed_managed, true, 'disabling is not an edit of the seeded fields');
     // A restart with an unchanged seed and a restart with a rotated token.
-    await applySeed(pool, keyring, seedWith('seed-token-aaaaaaaa'), logger);
+    await applySeed(pool, keyring, seedWith('seed-token-aaaaaaaa'), logger, TEST_UPSTREAM);
     assert.equal((await state()).enabled, false);
-    await applySeed(pool, keyring, seedWith('seed-token-cccccccc'), logger);
+    await applySeed(pool, keyring, seedWith('seed-token-cccccccc'), logger, TEST_UPSTREAM);
     assert.equal((await state()).enabled, false);
     assert.equal((await readCredential(pool, keyring, id))?.value, 'seed-token-cccccccc');
   });
@@ -123,38 +124,38 @@ describe('install seed (needs PostgreSQL)', { skip: skipWithoutDb }, () => {
     for (const edit of edits) {
       await pool.query('DELETE FROM upstream_servers');
       await pool.query('DELETE FROM applied_seeds');
-      await applySeed(pool, keyring, seedWith('seed-token-aaaaaaaa'), logger);
+      await applySeed(pool, keyring, seedWith('seed-token-aaaaaaaa'), logger, TEST_UPSTREAM);
       const id = (await state()).id;
       await patchServer(pool, keyring, id, edit);
       assert.equal((await state()).seed_managed, false, JSON.stringify(Object.keys(edit)));
       const before = await state();
-      const actions = await applySeed(pool, keyring, seedWith('seed-token-zzzzzzzz', 'http://woo-mcp:7070/mcp'), logger);
+      const actions = await applySeed(pool, keyring, seedWith('seed-token-zzzzzzzz', 'http://woo-mcp.mcp-servers.svc.cluster.local:7070/mcp'), logger, TEST_UPSTREAM);
       assert.deepEqual(actions, { woo: 'skipped-not-managed' });
       assert.deepEqual(await state(), before);
     }
   });
 
   test('seed, delete the server, restart: it stays deleted', async () => {
-    await applySeed(pool, keyring, seedWith('seed-token-aaaaaaaa'), logger);
+    await applySeed(pool, keyring, seedWith('seed-token-aaaaaaaa'), logger, TEST_UPSTREAM);
     assert.equal(await deleteServer(pool, (await state()).id), true);
-    const actions = await applySeed(pool, keyring, seedWith('seed-token-aaaaaaaa'), logger);
+    const actions = await applySeed(pool, keyring, seedWith('seed-token-aaaaaaaa'), logger, TEST_UPSTREAM);
     assert.deepEqual(actions, { woo: 'skipped-removed' });
     assert.equal(await getServerBySlug(pool, 'woo'), null);
     // And again after another restart.
-    await applySeed(pool, keyring, seedWith('seed-token-aaaaaaaa'), logger);
+    await applySeed(pool, keyring, seedWith('seed-token-aaaaaaaa'), logger, TEST_UPSTREAM);
     assert.equal((await pool.query('SELECT count(*)::int AS c FROM upstream_servers')).rows[0].c, 0);
   });
 
   test('a server that an admin registered with the same slug before the seed is not touched', async () => {
     await pool.query("INSERT INTO upstream_servers (slug, name, url) VALUES ('woo', 'Mine', 'http://mine.test/mcp')");
-    const actions = await applySeed(pool, keyring, seedWith('seed-token-aaaaaaaa'), logger);
+    const actions = await applySeed(pool, keyring, seedWith('seed-token-aaaaaaaa'), logger, TEST_UPSTREAM);
     assert.deepEqual(actions, { woo: 'skipped-not-managed' });
     assert.equal((await state()).url, 'http://mine.test/mcp');
   });
 
   test('start-up of several gateway pods at once applies the seed once', async () => {
     const seed = seedWith('seed-token-aaaaaaaa');
-    const results = await Promise.all(Array.from({ length: 4 }, () => applySeed(pool, keyring, seed, logger)));
+    const results = await Promise.all(Array.from({ length: 4 }, () => applySeed(pool, keyring, seed, logger, TEST_UPSTREAM)));
     assert.equal(results.filter((result) => result.woo === 'inserted').length, 1);
     assert.equal((await pool.query('SELECT count(*)::int AS c FROM upstream_servers')).rows[0].c, 1);
   });
@@ -172,9 +173,34 @@ describe('install seed (needs PostgreSQL)', { skip: skipWithoutDb }, () => {
     assert.throws(() => loadSeedFile(bad), SeedError);
   });
 
+  test('SSRF guard: a seed url that is not allowed is a SeedError with the slug and the reason, and nothing is written', async () => {
+    const BLOCKED: Array<[string, string]> = [
+      ['http://169.254.169.254/mcp', 'ip_literal'],
+      ['http://kubernetes.default.svc:443/mcp', 'blocked_host'],
+      ['http://evil.example.com:8080/mcp', 'host_not_allowed'],
+    ];
+    const needles = ['169.254.169.254', 'kubernetes.default.svc', 'evil.example.com', ':8080/mcp', ':443'];
+    assert.ok(needles.length >= 5, `only ${needles.length} needles were loaded`);
+    for (const [url, reason] of BLOCKED) {
+      await assert.rejects(applySeed(pool, keyring, seedWith(null, url), logger, TEST_UPSTREAM), (error: unknown) => {
+        assert.ok(error instanceof SeedError);
+        assert.ok(error.message.includes('"woo"'), 'the slug is named');
+        assert.ok(error.message.includes(reason), 'the reason code is named');
+        for (const needle of needles) assert.ok(!error.message.includes(needle), `the message holds "${needle}"`);
+        return true;
+      }, url);
+      assert.equal(await state(), undefined, 'an insert with a blocked url writes no row');
+    }
+    // The sync path: a row from an allowed seed keeps its url when a later seed names a blocked one.
+    await applySeed(pool, keyring, seedWith(null), logger, TEST_UPSTREAM);
+    const before = await state();
+    await assert.rejects(applySeed(pool, keyring, seedWith(null, 'http://evil.example.com:8080/mcp'), logger, TEST_UPSTREAM), SeedError);
+    assert.deepEqual(await state(), before);
+  });
+
   test('the seed log names the slug and the action and no value', async () => {
     logLines.length = 0;
-    await applySeed(pool, keyring, seedWith('seed-token-logcheck-1234'), logger);
+    await applySeed(pool, keyring, seedWith('seed-token-logcheck-1234'), logger, TEST_UPSTREAM);
     assert.ok(logLines.some((line) => line.includes('"slug":"woo"') && line.includes('"action":"inserted"')));
     assert.ok(!logLines.join('\n').includes('seed-token-logcheck-1234'));
   });

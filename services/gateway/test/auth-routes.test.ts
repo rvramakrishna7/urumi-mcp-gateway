@@ -1,5 +1,6 @@
 import { after, before, describe, test } from 'node:test';
 import assert from 'node:assert/strict';
+import { TEST_UPSTREAM } from './helpers/upstream-policy.ts';
 import { randomBytes } from 'node:crypto';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import type { Server } from 'node:http';
@@ -106,7 +107,7 @@ describe('login, sessions and the admin API with a session (needs PostgreSQL)', 
     const { app } = createApp({
       logger,
       checkDatabase: async () => {},
-      admin: { db: pool, keyring, logger, sessions },
+      admin: { db: pool, keyring, logger, upstream: TEST_UPSTREAM, sessions },
       mcp: mcp.router,
       auth: createAuthRouter({ db: pool, logger, sessions }),
     });

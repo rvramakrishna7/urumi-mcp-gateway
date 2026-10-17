@@ -1,6 +1,6 @@
 import { createApp } from './app.ts';
-import { ConfigError, loadAccessConfig, loadChatConfig, loadConfig, loadSecurityConfig } from './config.ts';
-import type { AccessConfig, ChatConfig, Config, SecurityConfig } from './config.ts';
+import { ConfigError, loadAccessConfig, loadChatConfig, loadConfig, loadSecurityConfig, loadUpstreamPolicyConfig } from './config.ts';
+import type { AccessConfig, ChatConfig, Config, SecurityConfig, UpstreamPolicyConfig } from './config.ts';
 import { CryptoError, loadKeyring } from './crypto/credentials.ts';
 import type { Keyring } from './crypto/credentials.ts';
 import { checkDatabase, createPool } from './db/pool.ts';
@@ -24,12 +24,14 @@ let config: Config;
 let security: SecurityConfig;
 let chatConfig: ChatConfig;
 let accessConfig: AccessConfig;
+let upstreamPolicyConfig: UpstreamPolicyConfig;
 let keyring: Keyring;
 try {
   config = loadConfig();
   security = loadSecurityConfig();
   chatConfig = loadChatConfig();
   accessConfig = loadAccessConfig();
+  upstreamPolicyConfig = loadUpstreamPolicyConfig();
   // The master key must be exactly 32 bytes. A wrong or missing key stops the start with a clear reason.
   keyring = loadKeyring(security.masterKeyFile, security.masterKeyId);
 } catch (error) {
@@ -46,7 +48,7 @@ const pool = createPool(config.db, (error) => {
 // The seed runs before the server listens, so the registry is complete when the first request arrives. A seed that
 // cannot be applied stops the start: it is a configuration error that an operator must see.
 try {
-  if (security.seedFile) await applySeed(pool, keyring, loadSeedFile(security.seedFile), logger);
+  if (security.seedFile) await applySeed(pool, keyring, loadSeedFile(security.seedFile), logger, upstreamPolicyConfig);
 } catch (error) {
   logger.error('startup failed', { reason: error instanceof SeedError ? error.message : 'the seed could not be applied', errorName: error instanceof Error ? error.name : 'unknown' });
   process.exit(1);
@@ -65,6 +67,8 @@ try {
 
 const gateway = createGateway({ db: pool, keyring, logger, memberRestrictedTools: accessConfig.memberRestrictedTools });
 logger.info('access', { memberRestrictedTools: accessConfig.memberRestrictedTools.length });
+// The policy checks the seed (above) and the admin routes. The upstream client does not use it yet.
+logger.info('upstream policy', { upstreamAllowedHosts: upstreamPolicyConfig.policy.allowed.size });
 const poller = createPoller({ db: pool, keyring, logger });
 
 const mcp = createMcpRouter({ db: pool, gateway, logger, allowedHosts: security.allowedHosts });
@@ -86,7 +90,7 @@ logger.info('chat', { configured: agent !== undefined, model: chatConfig.model, 
 const { app, beginShutdown } = createApp({
   logger,
   checkDatabase: () => checkDatabase(pool),
-  admin: { db: pool, keyring, logger, sessions, onServerChanged: () => poller.refreshNow() },
+  admin: { db: pool, keyring, logger, upstream: upstreamPolicyConfig, sessions, onServerChanged: () => poller.refreshNow() },
   mcp: mcp.router,
   auth: createAuthRouter({ db: pool, logger, sessions }),
   me: createMeKeysRouter({ db: pool, logger, sessions }),

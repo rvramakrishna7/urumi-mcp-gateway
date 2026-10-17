@@ -107,6 +107,13 @@ spec:
             # Tool names that only an admin may list or call (tool permissions).
             - name: MEMBER_RESTRICTED_TOOLS
               value: {{ required "security.memberRestrictedTools must name at least one tool" (join "," .Values.security.memberRestrictedTools) | quote }}
+            # The upstream addresses an admin may register (SSRF guard), and the namespace of this pod, whose names are never allowed.
+            - name: UPSTREAM_ALLOWED_HOSTS
+              value: {{ required "security.upstreamAllowedHosts must name at least one host:port" (join "," .Values.security.upstreamAllowedHosts) | quote }}
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
             {{- include "gateway.dbEnv" . | nindent 12 }}
           # Liveness never calls the database or an upstream. Readiness calls the database (the gateway cannot
           # serve without it) and never an upstream: a slow or dead upstream must not take the gateway out of the

@@ -7,6 +7,8 @@ import type { Keyring } from '../crypto/credentials.ts';
 import type { Logger } from '../logger.ts';
 import { insertServer, readCredential } from './repository.ts';
 import { credentialInput, SLUG, isValidUpstreamUrl } from './validation.ts';
+import type { UpstreamPolicyConfig } from '../config.ts';
+import { checkUpstreamUrl } from '../upstream/ssrf.ts';
 import type { CredentialInput } from './validation.ts';
 
 // The install-time seed (docs/architecture.md, decision 31). The file is made by the chart from its values and holds no
@@ -74,7 +76,13 @@ function readSeedCredential(entry: SeedFile['servers'][number]): CredentialInput
 //  - A slug that was applied before and whose server was removed stays removed (the table applied_seeds remembers it).
 //  - A server that is still seed managed follows the url and the credential of the seed.
 //  - The seed never writes "enabled": a server that an admin disabled stays disabled.
-export async function applySeed(db: Database, keyring: Keyring, seed: SeedFile, logger: Logger): Promise<Record<string, SeedAction>> {
+export async function applySeed(db: Database, keyring: Keyring, seed: SeedFile, logger: Logger, upstream: UpstreamPolicyConfig): Promise<Record<string, SeedAction>> {
+  // One check for the insert path and the sync path, before anything is written. The error names the slug and the reason
+  // code, never the URL.
+  for (const entry of seed.servers) {
+    const verdict = checkUpstreamUrl(upstream.policy, upstream.ownNamespace, entry.url);
+    if (!verdict.ok) throw new SeedError(`the url of seed "${entry.slug}" is not allowed (${verdict.reason})`);
+  }
   const actions: Record<string, SeedAction> = {};
   await withTransaction(db, async (client) => {
     await client.query('SELECT pg_advisory_xact_lock($1)', [SEED_LOCK_KEY]);

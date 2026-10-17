@@ -1,5 +1,6 @@
 import { after, before, describe, test } from 'node:test';
 import assert from 'node:assert/strict';
+import { TEST_UPSTREAM } from './helpers/upstream-policy.ts';
 import { randomBytes } from 'node:crypto';
 import type { Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
@@ -65,7 +66,7 @@ describe('registry admin API, authentication and the leak scan (needs PostgreSQL
     const { app } = createApp({
       logger,
       checkDatabase: async () => {},
-      admin: { db: pool, keyring, logger, now: () => clock },
+      admin: { db: pool, keyring, logger, upstream: TEST_UPSTREAM, now: () => clock },
     });
     server = await new Promise<Server>((resolve) => {
       const instance = app.listen(0, '127.0.0.1', () => resolve(instance));
@@ -219,6 +220,60 @@ describe('registry admin API, authentication and the leak scan (needs PostgreSQL
     assert.equal((await call('POST', '/api/admin/servers', adminKey, { slug: 'gamma', name: 'x', url: 'http://x.test/mcp' })).status, 409);
     assert.equal((await call('GET', '/api/admin/servers/not-a-uuid', adminKey)).status, 404);
     assert.equal((await call('DELETE', '/api/admin/servers/00000000-0000-4000-8000-000000000000', adminKey)).status, 404);
+  });
+
+  test('SSRF guard: a blocked address is 400 url_blocked with a reason code, on create and on edit, and nothing changes', async () => {
+    const BLOCKED: Array<[string, string]> = [
+      ['http://169.254.169.254/', 'ip_literal'],
+      ['http://kubernetes.default.svc:443/', 'blocked_host'],
+      ['http://evil.example.com:8080/mcp', 'host_not_allowed'],
+    ];
+    const logStart = logLines.length;
+    const bodies: string[] = [];
+
+    for (const [url, reason] of BLOCKED) {
+      const response = await call('POST', '/api/admin/servers', adminKey, { slug: 'ssrfpost', name: 'x', url });
+      bodies.push(JSON.stringify(response.json));
+      assert.equal(response.status, 400, url);
+      assert.deepEqual(response.json, { error: 'invalid request', issues: [{ field: 'url', problem: 'url_blocked', reason }] }, url);
+    }
+    assert.equal((await pool.query("SELECT count(*)::int AS c FROM upstream_servers WHERE slug = 'ssrfpost'")).rows[0].c, 0, 'a refused POST creates no row');
+
+    // An allowed address is created.
+    const created = await call('POST', '/api/admin/servers', adminKey, { slug: 'ssrfok', name: 'x', url: 'http://x.test/mcp' });
+    assert.equal(created.status, 201);
+    const id = created.json.server.id as string;
+    const rowBefore = (await pool.query('SELECT url, updated_at, seed_managed FROM upstream_servers WHERE id = $1', [id])).rows[0];
+
+    for (const [url, reason] of BLOCKED) {
+      const response = await call('PATCH', `/api/admin/servers/${id}`, adminKey, { name: 'changed', url });
+      bodies.push(JSON.stringify(response.json));
+      assert.equal(response.status, 400, url);
+      assert.deepEqual(response.json, { error: 'invalid request', issues: [{ field: 'url', problem: 'url_blocked', reason }] }, url);
+    }
+    const rowAfter = (await pool.query('SELECT url, name, updated_at, seed_managed FROM upstream_servers WHERE id = $1', [id])).rows[0];
+    assert.equal(rowAfter.url, 'http://x.test/mcp', 'a refused PATCH leaves the url unchanged');
+    assert.equal(rowAfter.name, 'x', 'a refused PATCH changes no other field either');
+    assert.deepEqual([rowAfter.updated_at, rowAfter.seed_managed], [rowBefore.updated_at, rowBefore.seed_managed]);
+
+    // A PATCH without a url is not checked, and a PATCH with an allowed url works.
+    const disabled = await call('PATCH', `/api/admin/servers/${id}`, adminKey, { enabled: false });
+    assert.equal(disabled.status, 200);
+    assert.equal(disabled.json.server.enabled, false);
+    const moved = await call('PATCH', `/api/admin/servers/${id}`, adminKey, { url: 'http://gamma.test/mcp' });
+    assert.equal(moved.status, 200);
+
+    // Leak scan with a control: the refused hosts are in no response body and no log line made by these requests.
+    const CONTROL = 'leak-control-7d1e.example.com';
+    const needles = ['169.254.169.254', 'kubernetes.default.svc', 'evil.example.com', ':8080/mcp', CONTROL];
+    assert.ok(needles.length >= 5, `only ${needles.length} needles were loaded`);
+    const found = (text: string) => needles.filter((needle) => text.includes(needle));
+    const scanned = [...bodies, ...logLines.slice(logStart)].join('\n');
+    assert.deepEqual(found(scanned), [], 'a refused host reached a response or a log line');
+    assert.ok(logLines.slice(logStart).some((line) => line.includes('server url refused') && line.includes('"reason":"ip_literal"')), 'the refusal is logged with its reason');
+    assert.deepEqual(found(`${scanned}\nplanted ${CONTROL}`), [CONTROL], 'the control must be found, or the scan proves nothing');
+
+    assert.equal((await call('DELETE', `/api/admin/servers/${id}`, adminKey)).status, 204);
   });
 
   test('remove deletes the server and its credential', async () => {

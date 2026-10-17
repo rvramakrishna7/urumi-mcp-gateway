@@ -13,8 +13,8 @@ const RESERVED_HEADERS = new Set([
 const MAX_URL_LENGTH = 2048;
 const MAX_CREDENTIAL_LENGTH = 4096;
 
-// http and https only, no credentials, query string or fragment in the address. Private and cluster-internal
-// addresses are allowed on purpose (woo-mcp is one). SSRF is a threat-model item (decision 31).
+// http and https only, no credentials, query string or fragment in the address. This is the syntax check only. Which
+// hosts and ports an admin may register is decided by the SSRF guard in src/upstream/ssrf.ts (decision 44).
 export function isValidUpstreamUrl(value: string): boolean {
   if (value.length > MAX_URL_LENGTH || /\s/.test(value) || value.includes('?') || value.includes('#')) return false;
   let url: URL;
