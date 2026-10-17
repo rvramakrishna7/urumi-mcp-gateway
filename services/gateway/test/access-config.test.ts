@@ -4,7 +4,7 @@ import { ConfigError, DEFAULT_MEMBER_RESTRICTED_TOOLS, loadAccessConfig } from '
 
 describe('loadAccessConfig', () => {
   test('without the variable the default list applies, and it keeps the Step 18 member tools allowed', () => {
-    assert.deepEqual(loadAccessConfig({}).memberRestrictedTools, ['woo__create_product', 'woo__update_order_status', 'fetch__fetch']);
+    assert.deepEqual(loadAccessConfig({}).memberRestrictedTools, ['woo__create_product', 'woo__update_order_status']);
     assert.deepEqual(DEFAULT_MEMBER_RESTRICTED_TOOLS, loadAccessConfig({}).memberRestrictedTools);
     for (const allowed of ['woo__list_orders', 'woo__get_order', 'woo__list_products', 'fx__convert_amounts']) {
       assert.ok(!DEFAULT_MEMBER_RESTRICTED_TOOLS.includes(allowed), allowed);

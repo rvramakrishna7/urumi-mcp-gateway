@@ -188,7 +188,7 @@ export function loadChatConfig(env: NodeJS.ProcessEnv = process.env): ChatConfig
   return { groqApiKey, model: parsed.data.CHAT_MODEL, confirmTools, ratePerMinute: parsed.data.CHAT_RATE_PER_MINUTE };
 }
 
-export const DEFAULT_MEMBER_RESTRICTED_TOOLS = ['woo__create_product', 'woo__update_order_status', 'fetch__fetch'];
+export const DEFAULT_MEMBER_RESTRICTED_TOOLS = ['woo__create_product', 'woo__update_order_status'];
 // <slug>__<tool>. The slug part is the registry's SLUG without its anchors, so the two rules cannot drift apart.
 const RESTRICTED_TOOL_NAME = new RegExp(`^${SLUG.source.slice(1, -1)}__[A-Za-z0-9_-]{1,100}$`);
 

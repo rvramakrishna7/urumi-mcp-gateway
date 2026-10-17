@@ -165,19 +165,29 @@ describe('member tool restrictions: listTools, callTool, rejectToolCall and the 
     assert.deepEqual([result.isError, textOf(result)], [true, ADMIN_REQUIRED]);
   });
 
-  test('the built-in default list: the member tools of Step 18 stay allowed, the three write tools are refused', async () => {
+  test('the built-in default list: the member tools of Step 18 stay allowed, the two write tools are refused', async () => {
     const forMember = await names(defaultGateway, member);
-    for (const hidden of ['woo__create_product', 'woo__update_order_status', 'fetch__fetch']) assert.ok(!forMember.includes(hidden), hidden);
+    for (const hidden of ['woo__create_product', 'woo__update_order_status']) assert.ok(!forMember.includes(hidden), hidden);
     for (const allowed of ['woo__list_orders', 'fx__convert_amounts']) assert.ok(forMember.includes(allowed), allowed);
     const before = fake.toolCalls();
     assert.equal((await defaultGateway.callTool(member, 'woo__list_orders', {})).isError, undefined);
     assert.equal((await defaultGateway.callTool(member, 'fx__convert_amounts', {})).isError, undefined);
     assert.equal(fake.toolCalls(), before + 2);
-    for (const denied of ['woo__create_product', 'woo__update_order_status', 'fetch__fetch']) {
+    for (const denied of ['woo__create_product', 'woo__update_order_status']) {
       const result = await defaultGateway.callTool(member, denied, {});
       assert.deepEqual([result.isError, textOf(result)], [true, ADMIN_REQUIRED], denied);
     }
     assert.equal(fake.toolCalls(), before + 2, 'the refused calls reached no upstream');
+  });
+
+  test('the built-in default list: fetch__fetch is allowed for a member (listed and not refused as member_restricted)', async () => {
+    assert.ok((await names(defaultGateway, member)).includes('fetch__fetch'));
+    const before = fake.toolCalls();
+    const result = await defaultGateway.callTool(member, 'fetch__fetch', {});
+    assert.equal(result.isError, undefined);
+    assert.equal(fake.toolCalls(), before + 1);
+    const row = await lastRow();
+    assert.deepEqual([row.tool, row.outcome, row.error_kind], ['fetch', 'ok', null]);
   });
 
   test('rejectToolCall: it writes a complete row and never reaches an upstream', async () => {
