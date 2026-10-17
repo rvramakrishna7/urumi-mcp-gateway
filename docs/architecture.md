@@ -633,6 +633,27 @@ Step 15 needs two more upstream servers (the brief asks for at least three). Can
 - **What does not change.** `fetch__fetch` stays in `chat.confirmTools` (decision 42): every fetch in the chat agent shows a confirmation card with the exact URL. The egress of fetch-mcp is limited by the NetworkPolicy `public-internet-egress`. An operator who wants fetch to be admin-only again adds the name to `security.memberRestrictedTools` and runs `helm upgrade`.
 - **Tests.** `test/access-config.test.ts` (the default is the two woo names) and `test/tool-permissions.test.ts` (a member lists and calls `fetch__fetch` with the default list; the two woo write tools are still refused).
 
+### 46. Drain delay before the gateway pod stops (chart `gateway.preStopSleepSeconds`, 18 Oct 2026)
+
+- **Problem.** The gateway runs with one replica and `RollingUpdate` (`maxUnavailable` 25% rounds down to 0, `maxSurge` 25% rounds up to 1), so a rollout never has zero Ready pods. Requests still failed while the old pod stopped: the kubelet sends SIGTERM while Traefik still has the old endpoint for a moment, so a new connection is refused (HTTP 502) or hangs (curl code 000 at its 2 s limit). The cause of the 000 was not measured.
+- **What.** `gateway.preStopSleepSeconds` in `charts/gateway/values.yaml` (default 5) becomes a native `lifecycle.preStop.sleep.seconds` on the gateway container only. It needs Kubernetes 1.30 or newer (the local k3s is v1.35.5; the version of a fresh VPS install is not recorded in this repo). `terminationGracePeriodSeconds` is now `preStopSleepSeconds + 25`, so the default stays 30 s and covers the sleep plus the 10 s shutdown timer of the app (`src/index.ts`). The value 0 removes the hook and leaves 25 s.
+- **Evidence (18 Oct 2026, local k3d, probe of `/healthz` through the Ingress about every 0.43 s, window from 2 s before the rollout to 40 s after it).**
+
+  | Rollout | Terminating pod had the hook | Probes | Non-200 |
+  |---|---|---|---|
+  | rollback to 27 | no | 151 | 3 (502) |
+  | upgrade to 30 | no | 141 | 1 (000) |
+  | R1, to 31 | no | 137 | 2 (502) |
+  | R2, to 30 | yes | 135 | 0 |
+  | R3, to 31 | no | 136 | 1 (000) |
+  | R4, to 30 | yes | 137 | 0 |
+  | R5, to 31 | no | 136 | 2 (502, 000) |
+
+  With the hook on the terminating pod: no non-200 in 2 of 2 rollouts. Without it: 1 to 3 non-200 in 5 of 5. **Limits:** a small sample, a probe resolution of about 0.43 s (the 000 cases show a gap of about 2.4 s between probes), one replica, one machine. The data shows a difference in this sample; it does not prove that the hook removes every failure, and it does not show why the 000 happens.
+- **Who is protected.** The hook runs in the pod that is stopping and comes from that pod's own spec. The first rollout after the hook is enabled is not protected (the old pod has no hook), and neither is a rollout that follows a rollback to a revision without the hook.
+- **Not covered.** The dashboard Deployment (nginx) has no drain delay yet. The store and the MCP server Deployments were not measured.
+- **Rollback.** Set `gateway.preStopSleepSeconds` to 0, or `helm rollback`.
+
 ## Known limitations
 
 - fetch-mcp, the image build is not reproducible: two builds of `fetch-mcp:0.1.0` from the same source gave different image IDs (`046e79f5…` and `de22713a…`). Both pass the SSRF drill, but the tested image and the deployed image are not provably the same bytes. Candidate fixes (not done): build with a pinned `--platform`, and check the layer order and timestamps (for example `SOURCE_DATE_EPOCH`) of the build.

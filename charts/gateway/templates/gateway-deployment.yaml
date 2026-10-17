@@ -40,6 +40,8 @@ spec:
         fsGroup: 10001
         seccompProfile:
           type: RuntimeDefault
+      # Covers the preStop sleep, then the 10 second shutdown timer of the app (src/index.ts), with a margin.
+      terminationGracePeriodSeconds: {{ add (int .Values.gateway.preStopSleepSeconds) 25 }}
       # The migrations run before the server starts, from the same image, so the schema that the code expects is
       # there. A runner takes a database lock, so several pods starting together are safe. If the database is not
       # up yet, the runner retries for about two minutes and then fails, and Kubernetes restarts the pod.
@@ -66,6 +68,12 @@ spec:
         - name: gateway
           image: "{{ .Values.gateway.image.repository }}:{{ .Values.gateway.image.tag }}"
           imagePullPolicy: {{ .Values.gateway.image.pullPolicy }}
+          {{- if gt (int .Values.gateway.preStopSleepSeconds) 0 }}
+          lifecycle:
+            preStop:
+              sleep:
+                seconds: {{ int .Values.gateway.preStopSleepSeconds }}
+          {{- end }}
           ports:
             - name: http
               containerPort: {{ .Values.gateway.port }}

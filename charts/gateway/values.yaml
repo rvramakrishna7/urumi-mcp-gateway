@@ -14,6 +14,9 @@ gateway:
   port: 8080
   # Connections that one gateway pod may open to PostgreSQL.
   dbPoolMax: 10
+  # Seconds the pod keeps serving after the kubelet starts to stop it, so that the Ingress and the Service stop
+  # sending new requests before the process receives SIGTERM. Zero removes the hook.
+  preStopSleepSeconds: 5
   # The id of the master key that encrypts new credentials (decision 30). Rotation adds a new id.
   masterKeyId: k1
   resources:
