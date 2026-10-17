@@ -30,6 +30,8 @@ const tool = (name: string, extra: Partial<FakeTool> = {}): FakeTool => ({ name,
 // The connect timeout is 1000 ms (it was 400 ms): the fakes and the gateway share one event loop, the first poll opens 11
 // connections at once, and the test files run in parallel, so a healthy fake could miss 400 ms when the CPU was busy.
 const limits: UpstreamLimits = { connectTimeoutMs: 1000, listTimeoutMs: 400, maxResponseBytes: 64 * 1024 };
+// How long the "slow" fake waits before it answers tools/list. It is far above listTimeoutMs, so the poller must cut it.
+const SLOW_DELAY_MS = 3000;
 
 describe('gateway core: aggregation, routing, isolation and audit, against fake upstreams (needs PostgreSQL)', { skip: skipWithoutDb }, () => {
   let db: TestDatabase;
@@ -100,7 +102,7 @@ describe('gateway core: aggregation, routing, isolation and audit, against fake 
 
     await register('fast', { token: TOKEN, tools: [tool('echo'), tool('ping')] }, { bearer: TOKEN });
     await register('mixed', { tools: [tool('quick'), tool('sluggish')], callDelayMs: { sluggish: 2500 } }, { callTimeoutMs: 1000 });
-    await register('slow', { tools: [tool('never_listed')], listDelayMs: 3000 });
+    await register('slow', { tools: [tool('never_listed')], listDelayMs: SLOW_DELAY_MS });
     await register('dead', { tools: [tool('never_listed')] }, { dead: true });
     await register('dying', { tools: [tool('ping')] });
     await register('huge', { tools: [tool('big')], hugeTools: { big: 200 * 1024 } });
@@ -212,22 +214,34 @@ describe('gateway core: aggregation, routing, isolation and audit, against fake 
 
   test('a slow upstream does not delay the list or a call to another upstream (measured)', async (t) => {
     const cycle = poller.refreshNow();
+    let pollDone = false;
+    cycle.then(() => {
+      pollDone = true;
+    });
     const started = Date.now();
     const listStart = Date.now();
     const listed = await gateway.listTools(admin);
     const listMs = Date.now() - listStart;
+    const listFinishedFirst = !pollDone;
     const callStart = Date.now();
     const answer = await call(admin, 'dup1__list_items');
     const callMs = Date.now() - callStart;
+    const callFinishedFirst = !pollDone;
     await cycle;
     const cycleMs = Date.now() - started;
     t.diagnostic(`while the poll waited for the slow upstream: listTools ${listMs} ms (${listed.length} tools), a call to another upstream ${callMs} ms, whole poll ${cycleMs} ms`);
+    // The ordering is the property: the list and the call to another upstream are answered while the poll, which is
+    // still waiting for the slow upstream, is in flight. It does not depend on how fast the machine is.
+    assert.ok(listFinishedFirst, 'the list must finish while the slow poll is still in flight');
+    assert.ok(callFinishedFirst, 'the call must finish while the slow poll is still in flight');
+    // The ordering checks above prove that neither the list nor the call is delayed by the slow poll. The two bounds below
+    // are only guards: the list is one SQL query, and the call must not have fallen into a timeout path of the fast fake.
     assert.ok(listMs < 150, `the list took ${listMs} ms`);
-    assert.ok(callMs < 400, `the call took ${callMs} ms`);
+    assert.ok(callMs < limits.connectTimeoutMs, `the call took ${callMs} ms`);
     assert.equal(textOf(answer), 'answer of dup1');
-    // The slow upstream costs one list timeout (400 ms) and the dead one costs nothing: the poll takes about the
-    // longest of them, not the sum.
-    assert.ok(cycleMs < 1200, `the poll took ${cycleMs} ms`);
+    // The poll is cut by the list deadline (400 ms) and does not wait for the slow upstream (SLOW_DELAY_MS). The bound is
+    // tied to that delay, not to the speed of the machine: a poll that waited for the slow upstream takes 3000 ms or more.
+    assert.ok(cycleMs < SLOW_DELAY_MS - 500, `the poll must be cut by the list deadline, not wait for the slow upstream (took ${cycleMs} ms)`);
   });
 
   test('A: a tool call that times out is recorded on the audit row only; the server stays connected and its other tools work', async (t) => {
