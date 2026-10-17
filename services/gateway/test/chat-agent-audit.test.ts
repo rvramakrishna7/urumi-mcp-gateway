@@ -56,7 +56,7 @@ describe('chat agent through the real gateway: audit rows (needs PostgreSQL)', {
     (await pool.query('SELECT user_id, user_email, server_slug, tool, requested_name, outcome, via FROM audit_log ORDER BY id')).rows as {
       user_id: string; user_email: string; server_slug: string | null; tool: string | null; requested_name: string; outcome: string; via: string;
     }[];
-  const as = (u: { id: string; email: string }) => ({ userId: u.id, email: u.email });
+  const as = (u: { id: string; email: string }) => ({ userId: u.id, email: u.email, role: u === admin ? ('admin' as const) : ('member' as const) });
 
   before(async () => {
     keyDir = mkdtempSync(join(tmpdir(), 'chat-agent-audit-'));
@@ -90,7 +90,7 @@ describe('chat agent through the real gateway: audit rows (needs PostgreSQL)', {
 
   test('the same tool for the admin is a row for the admin, and a call with via mcp stays mcp', async () => {
     await agentWith([asks(call('shop__list_orders', {}, 'c1')), answer('ok')]).runTurn(as(admin), [{ role: 'user', content: 'orders?' }]);
-    await gateway.callTool({ userId: member.id, email: member.email, via: 'mcp' }, 'shop__list_orders', {});
+    await gateway.callTool({ userId: member.id, email: member.email, role: 'member', via: 'mcp' }, 'shop__list_orders', {});
     const all = await rows();
     assert.deepEqual(all.slice(-2).map((r) => [r.user_email, r.via]), [[admin.email, 'chat'], [member.email, 'mcp']]);
   });
@@ -126,6 +126,74 @@ describe('chat agent through the real gateway: audit rows (needs PostgreSQL)', {
     const last = (await rows()).at(-1)!;
     assert.deepEqual([last.outcome, last.via, last.user_id, last.tool], ['unknown_tool', 'chat', member.id, null]);
     assert.equal(fake.toolCalls(), before);
+  });
+
+  // The agent runs only names that it offered in this turn. Anything else goes to rejectToolCall: no confirmation card, no
+  // credential read, no upstream request, and one complete audit row.
+  test('a member whose model invents a restricted tool: no confirmation card, no call upstream, a denied row via chat', async () => {
+    const restricted = createGateway({ db: pool, keyring, logger: createLogger(() => {}), limits, memberRestrictedTools: ['shop__create_product'] });
+    const offered: string[][] = [];
+    const agent = createAgent({
+      gateway: restricted,
+      groq: {
+        complete: async (_messages, tools) => {
+          offered.push(tools.map((entry) => entry.function.name));
+          return offered.length === 1 ? asks(call('shop__create_product', { name: 'Sneaky' }, 'c1')) : answer('That needs an admin.');
+        },
+      },
+      keyring,
+      logger: createLogger(() => {}),
+      confirmTools: CONFIRM,
+    });
+    const before = [(await rows()).length, fake.toolCalls()];
+    const result = await agent.runTurn(as(member), [{ role: 'user', content: 'create a mug' }]);
+    assert.equal(result.pending, undefined, 'no confirmation card');
+    assert.equal(result.reply, 'That needs an admin.');
+    assert.deepEqual(offered[0], ['shop__list_orders'], 'the model was never offered the restricted tool');
+    assert.equal(fake.toolCalls(), before[1], 'nothing reached the upstream');
+    const all = await rows();
+    assert.equal(all.length, before[0]! + 1);
+    assert.deepEqual([all.at(-1)!.user_id, all.at(-1)!.server_slug, all.at(-1)!.tool, all.at(-1)!.outcome, all.at(-1)!.via], [member.id, 'shop', 'create_product', 'denied', 'chat']);
+    const kind = await pool.query('SELECT error_kind FROM audit_log ORDER BY id DESC LIMIT 1');
+    assert.equal(kind.rows[0].error_kind, 'member_restricted');
+  });
+
+  test('a member with a valid confirmation token for a restricted tool is still refused, and nothing reaches the upstream', async () => {
+    const restricted = createGateway({ db: pool, keyring, logger: createLogger(() => {}), limits, memberRestrictedTools: ['shop__create_product'] });
+    const agent = createAgent({ gateway: restricted, groq: { complete: script([answer('Not allowed.')]) }, keyring, logger: createLogger(() => {}), confirmTools: CONFIRM });
+    const args = { name: 'Chat Mug' };
+    const token = issueConfirmToken(keyring, { userId: member.id, name: 'shop__create_product', args });
+    const before = [(await rows()).length, fake.toolCalls()];
+    await agent.runTurn(as(member), [{ role: 'user', content: 'x' }], { token, name: 'shop__create_product', args });
+    assert.equal(fake.toolCalls(), before[1]);
+    const all = await rows();
+    assert.equal(all.length, before[0]! + 1);
+    assert.deepEqual([all.at(-1)!.outcome, all.at(-1)!.via], ['denied', 'chat']);
+  });
+
+  test('an admin whose model asks for a real tool that was not offered this turn: no card, no call upstream, denied / not_offered', async () => {
+    // The tool exists and the admin may use it, but this turn did not offer it (here the list hides it).
+    const hiding: Pick<Gateway, 'listTools' | 'callTool' | 'rejectToolCall'> = {
+      listTools: async (caller) => (await gateway.listTools(caller)).filter((entry) => entry.name !== 'shop__create_product'),
+      callTool: (caller, name, args) => gateway.callTool(caller, name, args),
+      rejectToolCall: (caller, name, reason) => gateway.rejectToolCall(caller, name, reason),
+    };
+    const agent = createAgent({
+      gateway: hiding,
+      groq: { complete: script([asks(call('shop__create_product', { name: 'Sneaky' }, 'c1')), answer('Done.')]) },
+      keyring,
+      logger: createLogger(() => {}),
+      confirmTools: CONFIRM,
+    });
+    const before = [(await rows()).length, fake.toolCalls()];
+    const result = await agent.runTurn(as(admin), [{ role: 'user', content: 'create a mug' }]);
+    assert.equal(result.pending, undefined, 'a confirmation tool that was not offered gets no card');
+    assert.equal(fake.toolCalls(), before[1]);
+    const all = await rows();
+    assert.equal(all.length, before[0]! + 1);
+    assert.deepEqual([all.at(-1)!.user_id, all.at(-1)!.tool, all.at(-1)!.outcome, all.at(-1)!.via], [admin.id, 'create_product', 'denied', 'chat']);
+    const kind = await pool.query('SELECT error_kind FROM audit_log ORDER BY id DESC LIMIT 1');
+    assert.equal(kind.rows[0].error_kind, 'not_offered');
   });
 
   test('a disabled server is not offered to the model, and a call that asks for it anyway is unknown_tool', async () => {

@@ -6,7 +6,7 @@ gateway:
   image:
     repository: gateway
     # Pinned to an exact version. Never use latest.
-    tag: "0.9.1"
+    tag: "0.10.0"
     pullPolicy: IfNotPresent
   # Names of Secrets (of type kubernetes.io/dockerconfigjson) that hold registry credentials. Empty for the
   # local cluster, where the image is imported with "k3d image import".
@@ -76,6 +76,14 @@ chat:
     - fetch__fetch
   # Chat requests per user and minute (the gateway answers 429 above it).
   ratePerMinute: 10
+
+# Tool permissions. Exposed tool names (<slug>__<tool>) that only an admin may list or call. A member does not see them in
+# tools/list and is refused if a call names one anyway (the refusal is audited as "denied"). An empty list is refused.
+security:
+  memberRestrictedTools:
+    - woo__create_product
+    - woo__update_order_status
+    - fetch__fetch
 
 # Servers that the install registers once (decision 31). The values hold no secret: a credential names the Secret that
 # holds the value, and the chart copies it with lookup.

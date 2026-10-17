@@ -11,8 +11,8 @@ import type { Keyring } from '../src/crypto/credentials.ts';
 import { createLogger } from '../src/logger.ts';
 
 const keyring: Keyring = { currentId: 'k1', keys: new Map([['k1', randomBytes(32)]]) };
-const USER = { userId: '11111111-1111-4111-8111-111111111111', email: 'member@example.test' };
-const OTHER = { userId: '22222222-2222-4222-8222-222222222222', email: 'other@example.test' };
+const USER = { userId: '11111111-1111-4111-8111-111111111111', email: 'member@example.test', role: 'member' as const };
+const OTHER = { userId: '22222222-2222-4222-8222-222222222222', email: 'other@example.test', role: 'member' as const };
 const CONFIRM = ['woo__create_product', 'woo__update_order_status'];
 const logLines: string[] = [];
 const logger = createLogger((line) => logLines.push(line));
@@ -34,6 +34,7 @@ interface Setup {
   agent: ReturnType<typeof createAgent>;
   listed: Caller[];
   called: { caller: Caller; name: string; args: Record<string, unknown> }[];
+  rejected: { caller: Caller; name: string; reason: string }[];
   sent: { messages: ChatMessage[]; tools: GroqTool[]; timeoutMs: number | undefined }[];
 }
 
@@ -42,7 +43,7 @@ function setup(
   script: (GroqCompletion | ((messages: ChatMessage[]) => GroqCompletion | Promise<GroqCompletion>))[],
   options: { results?: (name: string, args: Record<string, unknown>) => ToolResult | Promise<ToolResult>; limits?: AgentLimits; now?: () => number; tools?: ListedTool[] } = {},
 ): Setup {
-  const state: Setup = { agent: undefined as never, listed: [], called: [], sent: [] };
+  const state: Setup = { agent: undefined as never, listed: [], called: [], rejected: [], sent: [] };
   let step = 0;
   state.agent = createAgent({
     gateway: {
@@ -53,6 +54,10 @@ function setup(
       callTool: async (caller, name, args) => {
         state.called.push({ caller, name, args });
         return options.results ? options.results(name, args) : textResult(`${name} ok`);
+      },
+      rejectToolCall: async (caller, name, reason) => {
+        state.rejected.push({ caller, name, reason });
+        return textResult('Unknown tool', true);
       },
     },
     groq: {
@@ -166,10 +171,11 @@ describe('the chat agent loop, with a scripted model and a fake gateway (no data
     assert.deepEqual(empty.called.map((c) => c.args), [{}]);
   });
 
-  test('the model may ask for a tool that does not exist: the gateway is asked, so that the audit sees it', async () => {
-    const s = setup([asks(call('woo__does_not_exist', {}, 'c1')), answer('no such tool')], { results: () => textResult('Unknown tool', true) });
+  test('the model may ask for a tool that was not offered: callTool is not used, rejectToolCall is, so that the audit sees it', async () => {
+    const s = setup([asks(call('woo__does_not_exist', {}, 'c1')), answer('no such tool')]);
     await s.agent.runTurn(USER, [user('x')]);
-    assert.deepEqual(s.called.map((c) => c.name), ['woo__does_not_exist']);
+    assert.deepEqual(s.called, []);
+    assert.deepEqual(s.rejected, [{ caller: { ...USER, via: 'chat' }, name: 'woo__does_not_exist', reason: 'not_offered' }]);
   });
 
   test('the loop stops after maxRounds, with a clear sentence and the calls that ran', async () => {

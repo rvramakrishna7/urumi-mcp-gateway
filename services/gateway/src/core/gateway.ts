@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import type { Database } from '../db/queryable.ts';
 import { CryptoError } from '../crypto/credentials.ts';
 import type { Keyring } from '../crypto/credentials.ts';
+import { DEFAULT_MEMBER_RESTRICTED_TOOLS } from '../config.ts';
 import type { Logger } from '../logger.ts';
 import { finishAudit, startAudit } from '../audit/repository.ts';
 import type { AuditOutcome } from '../audit/repository.ts';
@@ -18,6 +19,8 @@ import { markConnectedByCall, markUnreachable } from '../upstream/tools-reposito
 export interface Caller {
   userId: string;
   email: string;
+  // Read from the users table on every request by the authentication middleware.
+  role: 'admin' | 'member';
   via: 'mcp' | 'chat';
 }
 
@@ -39,6 +42,9 @@ export interface ToolResult {
 export interface Gateway {
   listTools(caller: Caller): Promise<ListedTool[]>;
   callTool(caller: Caller, exposedName: string, args: Record<string, unknown>): Promise<ToolResult>;
+  // Records a call that was refused before it reached the gateway core (a name the chat agent did not offer). It writes a
+  // complete audit row and answers with a result, and it never reads a credential and never contacts an upstream.
+  rejectToolCall(caller: Caller, exposedName: string, reason: 'not_offered'): Promise<ToolResult>;
 }
 
 export interface GatewayDeps {
@@ -46,9 +52,12 @@ export interface GatewayDeps {
   keyring: Keyring;
   logger: Logger;
   limits?: UpstreamLimits;
+  // Exposed names that only an admin may list or call. Defaults to the built-in list, never to "none".
+  memberRestrictedTools?: readonly string[];
 }
 
 const UNKNOWN_TOOL = 'Unknown tool';
+const ADMIN_REQUIRED = 'This tool requires admin access';
 
 function failure(text: string): ToolResult {
   return { content: [{ type: 'text', text }], isError: true };
@@ -92,22 +101,28 @@ interface Route {
   tool: string;
 }
 
-export function createGateway({ db, keyring, logger, limits = DEFAULT_LIMITS }: GatewayDeps): Gateway {
+export function createGateway({ db, keyring, logger, limits = DEFAULT_LIMITS, memberRestrictedTools = DEFAULT_MEMBER_RESTRICTED_TOOLS }: GatewayDeps): Gateway {
+  const restricted = new Set(memberRestrictedTools);
+
+  // Anyone who is not an admin is restricted, so an unexpected role value fails closed.
+  const isRestrictedFor = (caller: Caller, exposedName: string) => caller.role !== 'admin' && restricted.has(exposedName);
+
   // The list is read from the database only, so a slow or dead upstream cannot slow it. A server that is not
   // connected contributes no tools.
-  async function listTools(_caller: Caller): Promise<ListedTool[]> {
+  async function listTools(caller: Caller): Promise<ListedTool[]> {
     const result = await db.query(
       `SELECT s.slug, t.name, t.description, t.input_schema, t.annotations
        FROM upstream_servers s JOIN upstream_tools t ON t.server_id = s.id
        WHERE s.enabled AND s.status = 'connected' AND t.skipped_reason IS NULL
        ORDER BY s.slug, t.name`,
     );
-    return result.rows.map((row) => ({
+    const tools = result.rows.map((row) => ({
       name: `${row.slug}__${row.name}`,
       description: row.description,
       inputSchema: row.input_schema,
       annotations: row.annotations,
     }));
+    return tools.filter((tool) => !isRestrictedFor(caller, tool.name));
   }
 
   // The server and the tool of an exposed name. Null for an unknown tool, a disabled server and a skipped tool alike,
@@ -135,13 +150,15 @@ export function createGateway({ db, keyring, logger, limits = DEFAULT_LIMITS }: 
     }
   }
 
-  async function callTool(caller: Caller, exposedName: string, args: Record<string, unknown>): Promise<ToolResult> {
+  // The start of every call and of every refusal: resolve the name and write the phase 1 row. A failure here is returned as
+  // a result, and then nothing else happens.
+  async function open(caller: Caller, exposedName: string): Promise<{ route: Route | null; auditId: number } | { failed: ToolResult }> {
     let route: Route | null;
     try {
       route = await resolve(exposedName);
     } catch (error) {
       logger.error('tool lookup failed', { errorName: error instanceof Error ? error.name : 'unknown' });
-      return failure('The gateway could not process the call.');
+      return { failed: failure('The gateway could not process the call.') };
     }
 
     // Phase 1. No row, no call.
@@ -159,13 +176,42 @@ export function createGateway({ db, keyring, logger, limits = DEFAULT_LIMITS }: 
       });
     } catch (error) {
       logger.error('audit phase 1 failed, the call was not made', { errorName: error instanceof Error ? error.name : 'unknown' });
-      return failure('The call was not made because it could not be recorded.');
+      return { failed: failure('The call was not made because it could not be recorded.') };
     }
+    return { route, auditId };
+  }
+
+  async function rejectToolCall(caller: Caller, exposedName: string, reason: 'not_offered'): Promise<ToolResult> {
+    const opened = await open(caller, exposedName);
+    if ('failed' in opened) return opened.failed;
+    const { route, auditId } = opened;
+    const startedAt = process.hrtime.bigint();
+    if (!route) {
+      await finish(auditId, 'unknown_tool', null, startedAt);
+      return failure(UNKNOWN_TOOL);
+    }
+    // The name is rebuilt from the resolved route, not taken from the request.
+    const restrictedForCaller = isRestrictedFor(caller, `${route.slug}__${route.tool}`);
+    await finish(auditId, 'denied', restrictedForCaller ? 'member_restricted' : reason, startedAt);
+    return failure(restrictedForCaller ? ADMIN_REQUIRED : UNKNOWN_TOOL);
+  }
+
+  async function callTool(caller: Caller, exposedName: string, args: Record<string, unknown>): Promise<ToolResult> {
+    // Phase 1. No row, no call.
+    const opened = await open(caller, exposedName);
+    if ('failed' in opened) return opened.failed;
+    const { route, auditId } = opened;
     const startedAt = process.hrtime.bigint();
 
     if (!route) {
       await finish(auditId, 'unknown_tool', null, startedAt);
       return failure(UNKNOWN_TOOL);
+    }
+
+    // Before any credential is read or any connection is made. The name is rebuilt from the resolved route.
+    if (isRestrictedFor(caller, `${route.slug}__${route.tool}`)) {
+      await finish(auditId, 'denied', 'member_restricted', startedAt);
+      return failure(ADMIN_REQUIRED);
     }
 
     try {
@@ -195,5 +241,5 @@ export function createGateway({ db, keyring, logger, limits = DEFAULT_LIMITS }: 
     }
   }
 
-  return { listTools, callTool };
+  return { listTools, callTool, rejectToolCall };
 }

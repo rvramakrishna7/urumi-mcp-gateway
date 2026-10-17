@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { z } from 'zod';
+import { SLUG } from './registry/validation.ts';
 
 export interface DbConfig {
   host: string;
@@ -183,4 +184,31 @@ export function loadChatConfig(env: NodeJS.ProcessEnv = process.env): ChatConfig
   }
 
   return { groqApiKey, model: parsed.data.CHAT_MODEL, confirmTools, ratePerMinute: parsed.data.CHAT_RATE_PER_MINUTE };
+}
+
+export const DEFAULT_MEMBER_RESTRICTED_TOOLS = ['woo__create_product', 'woo__update_order_status', 'fetch__fetch'];
+// <slug>__<tool>. The slug part is the registry's SLUG without its anchors, so the two rules cannot drift apart.
+const RESTRICTED_TOOL_NAME = new RegExp(`^${SLUG.source.slice(1, -1)}__[A-Za-z0-9_-]{1,100}$`);
+
+export interface AccessConfig {
+  // Exposed tool names (<slug>__<tool>) that only an admin may list or call.
+  memberRestrictedTools: string[];
+}
+
+const accessSchema = z.object({
+  // A list that is set must not be empty: an empty value would lift the restriction without anybody deciding it.
+  MEMBER_RESTRICTED_TOOLS: z.string().min(1).optional(),
+});
+
+export function loadAccessConfig(env: NodeJS.ProcessEnv = process.env): AccessConfig {
+  const parsed = accessSchema.safeParse(env);
+  if (!parsed.success) throw invalid(parsed.error);
+  let memberRestrictedTools = DEFAULT_MEMBER_RESTRICTED_TOOLS;
+  if (parsed.data.MEMBER_RESTRICTED_TOOLS !== undefined) {
+    memberRestrictedTools = parsed.data.MEMBER_RESTRICTED_TOOLS.split(',').map((name) => name.trim());
+    if (!memberRestrictedTools.every((name) => RESTRICTED_TOOL_NAME.test(name))) {
+      throw new ConfigError('invalid or missing configuration: MEMBER_RESTRICTED_TOOLS');
+    }
+  }
+  return { memberRestrictedTools };
 }

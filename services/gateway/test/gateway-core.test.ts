@@ -91,8 +91,8 @@ describe('gateway core: aggregation, routing, isolation and audit, against fake 
     const memberUser = await createUser(pool, 'member@example.com', 'member');
     adminKey = (await createApiKey(pool, 'admin@example.com', 'admin key')).key;
     memberKey = (await createApiKey(pool, 'member@example.com', 'member key')).key;
-    admin = { userId: adminUser.id, email: adminUser.email, via: 'mcp' };
-    member = { userId: memberUser.id, email: memberUser.email, via: 'chat' };
+    admin = { userId: adminUser.id, email: adminUser.email, role: 'admin', via: 'mcp' };
+    member = { userId: memberUser.id, email: memberUser.email, role: 'member', via: 'chat' };
 
     const logger = createLogger((line) => logLines.push(line));
     gateway = createGateway({ db: pool, keyring, logger, limits });

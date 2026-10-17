@@ -25,7 +25,7 @@ const PASSWORD = 'correct horse battery staple';
 const MARKER = `ERROR-TEXT-MARKER-${randomBytes(4).toString('hex')}`;
 const keyring: Keyring = { currentId: 'k1', keys: new Map([['k1', randomBytes(32)]]) };
 
-type Seen = { identity: { userId: string; email: string }; messages: { role: string; content: string }[]; confirm: unknown };
+type Seen = { identity: { userId: string; email: string; role: string }; messages: { role: string; content: string }[]; confirm: unknown };
 
 describe('POST /api/chat (needs PostgreSQL)', { skip: skipWithoutDb }, () => {
   let db: TestDatabase;
@@ -239,7 +239,7 @@ describe('POST /api/chat (needs PostgreSQL)', { skip: skipWithoutDb }, () => {
       assert.deepEqual(reply.json, { reply: 'You have 2 orders.', toolCalls: [{ name: 'woo__list_orders', ok: true, durationMs: 12.5 }] });
       assert.equal(reply.headers.get('cache-control'), 'no-store');
       const last = seen.at(-1)!;
-      assert.deepEqual(last.identity, { userId: ids.get('alice@example.com'), email: 'alice@example.com' });
+      assert.deepEqual(last.identity, { userId: ids.get('alice@example.com'), email: 'alice@example.com', role: 'member' });
       assert.deepEqual(last.messages, body.messages);
       assert.equal(last.confirm, undefined);
     });
@@ -248,7 +248,7 @@ describe('POST /api/chat (needs PostgreSQL)', { skip: skipWithoutDb }, () => {
       await reset('bob@example.com');
       const reply = await post(main, 'bob@example.com', say());
       assert.equal(reply.status, 200);
-      assert.deepEqual(seen.at(-1)!.identity, { userId: ids.get('bob@example.com'), email: 'bob@example.com' });
+      assert.deepEqual(seen.at(-1)!.identity, { userId: ids.get('bob@example.com'), email: 'bob@example.com', role: 'member' });
     });
 
     test('a pending confirmation is passed on, and a confirm from the browser reaches the agent unchanged', async () => {
@@ -401,7 +401,7 @@ describe('POST /api/chat (needs PostgreSQL)', { skip: skipWithoutDb }, () => {
         model: 'openai/gpt-oss-120b',
         fetchImpl: (async () => new Response(`{"error":"${MARKER}"}`, { status: 429, headers: { 'retry-after': '7' } })) as unknown as typeof fetch,
       });
-      const agent = createAgent({ gateway: { listTools: async () => [], callTool: async () => ({ content: [] }) }, groq, keyring, logger, confirmTools: ['woo__create_product'] });
+      const agent = createAgent({ gateway: { listTools: async () => [], callTool: async () => ({ content: [] }), rejectToolCall: async () => ({ content: [] }) }, groq, keyring, logger, confirmTools: ['woo__create_product'] });
       const base = await start({ agent });
       await reset('alice@example.com');
       const reply = await post(base, 'alice@example.com', say());
@@ -417,7 +417,7 @@ describe('POST /api/chat (needs PostgreSQL)', { skip: skipWithoutDb }, () => {
         model: 'openai/gpt-oss-120b',
         fetchImpl: (async () => new Response(JSON.stringify({ choices: [{ message: { role: 'assistant', content: 'Hello from the model.' }, finish_reason: 'stop' }] }), { status: 200 })) as unknown as typeof fetch,
       });
-      const agent = createAgent({ gateway: { listTools: async () => [], callTool: async () => ({ content: [] }) }, groq, keyring, logger, confirmTools: ['woo__create_product'] });
+      const agent = createAgent({ gateway: { listTools: async () => [], callTool: async () => ({ content: [] }), rejectToolCall: async () => ({ content: [] }) }, groq, keyring, logger, confirmTools: ['woo__create_product'] });
       const base = await start({ agent });
       await reset('alice@example.com');
       const reply = await post(base, 'alice@example.com', say());
