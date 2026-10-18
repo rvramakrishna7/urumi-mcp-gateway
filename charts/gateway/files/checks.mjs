@@ -23,7 +23,7 @@ async function http(path) {
   return response.status;
 }
 
-const client = new pg.Client({
+const dbConfig = {
   host: process.env.DB_HOST,
   port: Number(process.env.DB_PORT),
   database: process.env.DB_NAME,
@@ -31,6 +31,38 @@ const client = new pg.Client({
   password: readFileSync(process.env.DB_PASSWORD_FILE, 'utf8').trim(),
   connectionTimeoutMillis: 5000,
   statement_timeout: 10_000,
+};
+const client = new pg.Client(dbConfig);
+
+// This pod is new, and the cluster programs its NetworkPolicy asynchronously: for about a second after the container
+// starts, its first connections can be refused. Wait until the gateway and PostgreSQL answer before any check runs, so
+// that start-up timing is not reported as a failure of the checks.
+const WAIT_LIMIT_MS = 20_000;
+const WAIT_STEP_MS = 500;
+
+async function waitFor(target, attempt) {
+  const deadline = Date.now() + WAIT_LIMIT_MS;
+  for (;;) {
+    try {
+      await attempt();
+      return;
+    } catch (error) {
+      const code = error?.cause?.code ?? error?.code ?? error?.name ?? 'unknown';
+      console.log(`[checks] waiting for ${target}: ${code}`);
+      if (Date.now() >= deadline) {
+        console.log(`[checks] FAIL ${target} did not answer within ${WAIT_LIMIT_MS / 1000} s (${code})`);
+        process.exit(1);
+      }
+      await new Promise((resolve) => setTimeout(resolve, WAIT_STEP_MS));
+    }
+  }
+}
+
+await waitFor('the gateway', () => http('/healthz'));
+await waitFor('PostgreSQL', async () => {
+  const probe = new pg.Client(dbConfig);
+  await probe.connect();
+  await probe.end();
 });
 
 try {
