@@ -32,9 +32,9 @@ ingress:
   host: gateway.urumi-rk.duckdns.org
   scheme: https
   # cert-manager reads the annotation, gets a certificate for ingress.host and keeps it in the Secret below.
-  # Staging certificates are not trusted by browsers: switch to letsencrypt-prod after a staging run works.
+  # letsencrypt-prod issues browser-trusted certificates. A staging run (letsencrypt-staging) was done first, on 18 Oct 2026.
   annotations:
-    cert-manager.io/cluster-issuer: letsencrypt-staging
+    cert-manager.io/cluster-issuer: letsencrypt-prod
     # Serve the app on HTTPS only. Plain HTTP on port 80 gets a 404, so an API key, a password or a session can never
     # cross the internet unencrypted. cert-manager's HTTP-01 challenge uses its own temporary Ingress, which is not
     # restricted, so certificate issuance and renewal still work on port 80.
