@@ -13,6 +13,32 @@ function check(name, ok, detail = '') {
   if (!ok) failed = true;
 }
 
+// This pod is new, and the cluster programs its NetworkPolicy asynchronously: for about a second after the container
+// starts, its first connections can be refused. Wait until the upstream answers before any check runs, so that start-up
+// timing is not reported as a failure of the checks. ("call" is declared below; function declarations are hoisted.)
+const WAIT_LIMIT_MS = 20_000;
+const WAIT_STEP_MS = 500;
+
+async function waitFor(target, attempt) {
+  const deadline = Date.now() + WAIT_LIMIT_MS;
+  for (;;) {
+    try {
+      await attempt();
+      return;
+    } catch (error) {
+      const code = error?.cause?.code ?? error?.code ?? error?.name ?? 'unknown';
+      console.log(`[checks] waiting for ${target}: ${code}`);
+      if (Date.now() >= deadline) {
+        console.log(`[checks] FAIL ${target} did not answer within ${WAIT_LIMIT_MS / 1000} s (${code})`);
+        process.exit(1);
+      }
+      await new Promise((resolve) => setTimeout(resolve, WAIT_STEP_MS));
+    }
+  }
+}
+
+await waitFor('the upstream', () => call(healthPaths[0] ?? '/healthz'));
+
 let token = '';
 try {
   token = readFileSync('/secrets/auth/token', 'utf8').trim();
