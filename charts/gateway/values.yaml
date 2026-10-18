@@ -61,6 +61,12 @@ ingress:
   # http or https. It is the scheme of PUBLIC_ORIGIN: https makes the session cookie Secure. Set https only together with TLS.
   scheme: http
   host: ""
+  # Annotations of the Ingress, for example cert-manager.io/cluster-issuer. Empty by default.
+  annotations: {}
+  # TLS for ingress.host. The Secret named here is created by cert-manager when the Ingress carries its annotation.
+  tls:
+    enabled: false
+    secretName: ""
 
 # The first admin (decision 36). The gateway creates this user as an invited admin, with a random token from the Secret
 # "gateway-bootstrap". Whoever reads the token chooses the password. Empty means no bootstrap and no Secret.
@@ -160,6 +166,9 @@ networkPolicy:
   enabled: false
   mcpServersNamespace: mcp-servers
   upstreamPort: 8080
+  # Lets Traefik reach the cert-manager HTTP-01 solver pods (port 8089) that cert-manager starts in this namespace
+  # while it validates ingress.host. Turn it on together with ingress.tls.enabled.
+  allowAcmeSolver: false
   # Never reachable from the gateway: loopback, link-local and every private range. The gateway gets the
   # public internet on port 443 only (the chat model).
   privateRanges:

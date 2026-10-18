@@ -1,28 +1,24 @@
 # Overrides for a production-like k3s VPS.
 # Use with: helm upgrade --install mcp-servers charts/mcp-servers -n mcp-servers --create-namespace -f charts/mcp-servers/values-prod.yaml
 #
-# This file is only rendered, not deployed (the production-like deployment is Step 20). The registry, the
-# domain and the numbers are placeholders and untested starting points.
+# The numbers are untested starting points.
 # Credentials are not set here: the WooCommerce key is copied from the store Secret and the bearer token is
 # generated in the cluster.
 
 wooMcp:
   image:
-    # The image comes from a registry that the VPS can reach, not from "k3d image import".
-    repository: registry.example.com/urumi/woo-mcp
+    # No registry: the images are built on the VPS ("docker build -t woo-mcp:0.1.1 services/woo-mcp", see the README) and
+    # imported into k3s with "docker save | sudo k3s ctr images import -". pullPolicy Never makes the kubelet use only the imported images.
+    repository: woo-mcp
     tag: "0.1.1"
-    pullPolicy: IfNotPresent
-  # The Secret must exist in the namespace mcp-servers before the install. Create it with your own credentials
-  # (never put them in this file or in Git):
-  #   kubectl create namespace mcp-servers
-  #   kubectl create secret docker-registry registry-credentials -n mcp-servers \
-  #     --docker-server=registry.example.com --docker-username=<user> --docker-password=<token>
-  imagePullSecrets:
-    - registry-credentials
+    pullPolicy: Never
 
   store:
-    # Must be exactly the home URL of the production store (store.scheme and store.host in charts/store/values-prod.yaml).
-    publicUrl: http://store.example.com
+    # http on purpose, although the store is https. WooCommerce builds the base URL of the OAuth signature with
+    # is_ssl() (class-wc-rest-authentication.php:581). woo-mcp calls WordPress inside the cluster over plain HTTP
+    # without X-Forwarded-Proto, so WooCommerce signs with the scheme http. The host must equal store.host in
+    # charts/store/values-prod.yaml.
+    publicUrl: http://store.urumi-rk.duckdns.org
     timezone: Asia/Kolkata
 
   resources:
@@ -35,11 +31,9 @@ wooMcp:
 
 fxMcp:
   image:
-    repository: registry.example.com/urumi/fx-mcp
+    repository: fx-mcp
     tag: "0.1.0"
-    pullPolicy: IfNotPresent
-  imagePullSecrets:
-    - registry-credentials
+    pullPolicy: Never
   # fx-mcp needs egress to api.frankfurter.dev. The NetworkPolicy (networkPolicy.enabled) allows ports 80 and 443 to the public internet.
   resources:
     requests:
@@ -51,11 +45,9 @@ fxMcp:
 
 fetchMcp:
   image:
-    repository: registry.example.com/urumi/fetch-mcp
+    repository: fetch-mcp
     tag: "0.1.0"
-    pullPolicy: IfNotPresent
-  imagePullSecrets:
-    - registry-credentials
+    pullPolicy: Never
   resources:
     requests:
       cpu: 200m

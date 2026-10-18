@@ -8,8 +8,18 @@ metadata:
   labels:
     {{- include "store.labels" . | nindent 4 }}
     app.kubernetes.io/component: wordpress
+  {{- with .Values.wordpress.ingress.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
 spec:
   ingressClassName: {{ .Values.wordpress.ingress.className }}
+  {{- if .Values.wordpress.ingress.tls.enabled }}
+  tls:
+    - hosts:
+        - {{ required "store.host is required" .Values.store.host | quote }}
+      secretName: {{ required "wordpress.ingress.tls.secretName is required when TLS is enabled" .Values.wordpress.ingress.tls.secretName | quote }}
+  {{- end }}
   rules:
     - host: {{ required "store.host is required" .Values.store.host | quote }}
       http:

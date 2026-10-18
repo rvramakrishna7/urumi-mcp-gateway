@@ -55,6 +55,32 @@ spec:
       ports:
         - { protocol: TCP, port: {{ .Values.gateway.port }} }
         - { protocol: TCP, port: {{ .Values.dashboard.port }} }
+{{- if .Values.networkPolicy.allowAcmeSolver }}
+---
+# cert-manager starts a short-lived solver pod in the namespace of the Ingress for the HTTP-01 challenge. Traefik
+# sends the request for /.well-known/acme-challenge/<token> to it on port 8089.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-acme-solver-from-ingress-controller
+  labels:
+    {{- include "gateway.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      acme.cert-manager.io/http01-solver: "true"
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: traefik
+      ports:
+        - { protocol: TCP, port: 8089 }
+{{- end }}
 ---
 # PostgreSQL accepts only the gateway pod (and the helm test pod).
 apiVersion: networking.k8s.io/v1

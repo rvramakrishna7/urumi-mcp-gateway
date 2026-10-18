@@ -3,8 +3,8 @@ The gateway backend is installed in namespace "{{ .Release.Namespace }}". It is 
   http://gateway.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.gateway.port }}
 
 {{- if .Values.ingress.enabled }}
-The public MCP endpoint is http://{{ .Values.ingress.host }}/mcp (Bearer API key). The Ingress routes /mcp,
-/healthz, /api/admin, /api/auth, /api/me, /api/audit and /api/chat to the gateway. Every other path is the dashboard: http://{{ .Values.ingress.host }}/
+The public MCP endpoint is {{ .Values.ingress.scheme }}://{{ .Values.ingress.host }}/mcp (Bearer API key). The Ingress routes /mcp,
+/healthz, /api/admin, /api/auth, /api/me, /api/audit and /api/chat to the gateway. Every other path is the dashboard: {{ .Values.ingress.scheme }}://{{ .Values.ingress.host }}/
 {{- else }}
 The Ingress is disabled: there is no public endpoint.
 {{- end }}

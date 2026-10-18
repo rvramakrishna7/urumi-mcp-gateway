@@ -13,8 +13,18 @@ metadata:
   labels:
     {{- include "gateway.labels" . | nindent 4 }}
     app.kubernetes.io/component: gateway
+  {{- with .Values.ingress.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
 spec:
   ingressClassName: {{ .Values.ingress.className }}
+  {{- if .Values.ingress.tls.enabled }}
+  tls:
+    - hosts:
+        - {{ required "ingress.host is required" .Values.ingress.host | quote }}
+      secretName: {{ required "ingress.tls.secretName is required when TLS is enabled" .Values.ingress.tls.secretName | quote }}
+  {{- end }}
   rules:
     - host: {{ required "ingress.host is required" .Values.ingress.host | quote }}
       http:

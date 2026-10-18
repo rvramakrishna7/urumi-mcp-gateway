@@ -80,6 +80,13 @@ wordpress:
   loopbackHostAlias: false
   ingress:
     className: traefik
+    # Annotations of the Ingress, for example cert-manager.io/cluster-issuer. Empty by default.
+    annotations: {}
+    # TLS for store.host. The Secret named here is created by cert-manager when the Ingress carries its annotation.
+    # Set store.scheme to https only together with this.
+    tls:
+      enabled: false
+      secretName: ""
   resources:
     requests:
       cpu: 200m

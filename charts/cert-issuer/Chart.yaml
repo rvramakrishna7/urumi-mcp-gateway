@@ -1,0 +1,6 @@
+apiVersion: v2
+name: cert-issuer
+description: Let's Encrypt ClusterIssuers (staging and production, HTTP-01 through Traefik) for cert-manager
+type: application
+version: 0.1.0
+appVersion: "1.21.2"
