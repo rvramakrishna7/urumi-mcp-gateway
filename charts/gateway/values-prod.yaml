@@ -1,23 +1,16 @@
 # Overrides for a production-like k3s VPS.
 # Use with: helm upgrade --install gateway charts/gateway -n gateway --create-namespace -f charts/gateway/values-prod.yaml
 #
-# This file is only rendered, not deployed (the production-like deployment is Step 20). The registry and the numbers
-# are placeholders and untested starting points.
+# The numbers are untested starting points.
 # Credentials are not set here: the database password is generated in the cluster on first install.
 
 gateway:
   image:
-    # The image comes from a registry that the VPS can reach, not from "k3d image import".
-    repository: registry.example.com/urumi/gateway
+    # No registry: the image is built on the VPS ("docker build -t gateway:0.11.1 services/gateway", see the README) and
+    # imported into k3s with "docker save | sudo k3s ctr images import -". pullPolicy Never makes the kubelet use only that imported image.
+    repository: gateway
     tag: "0.11.1"
-    pullPolicy: IfNotPresent
-  # The Secret must exist in the namespace gateway before the install. Create it with your own credentials
-  # (never put them in this file or in Git):
-  #   kubectl create namespace gateway
-  #   kubectl create secret docker-registry registry-credentials -n gateway \
-  #     --docker-server=registry.example.com --docker-username=<user> --docker-password=<token>
-  imagePullSecrets:
-    - registry-credentials
+    pullPolicy: Never
   dbPoolMax: 20
   resources:
     requests:
@@ -27,20 +20,32 @@ gateway:
       cpu: "1"
       memory: 512Mi
 
-# The dashboard image also comes from the registry.
+# The dashboard image is imported the same way.
 dashboard:
   image:
-    repository: registry.example.com/urumi/dashboard
+    repository: dashboard
     tag: "0.7.0"
+    pullPolicy: Never
 
-# A real DNS record for this host must point at the VPS (decision 8). It is a placeholder here.
+# The DNS A record of this host points at the VPS (decision 8).
 ingress:
-  host: gateway.example.com
+  host: gateway.urumi-rk.duckdns.org
   scheme: https
+  # cert-manager reads the annotation, gets a certificate for ingress.host and keeps it in the Secret below.
+  # letsencrypt-prod issues browser-trusted certificates. A staging run (letsencrypt-staging) was done first, on 18 Oct 2026.
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    # Serve the app on HTTPS only. Plain HTTP on port 80 gets a 404, so an API key, a password or a session can never
+    # cross the internet unencrypted. cert-manager's HTTP-01 challenge uses its own temporary Ingress, which is not
+    # restricted, so certificate issuance and renewal still work on port 80.
+    traefik.ingress.kubernetes.io/router.entrypoints: websecure
+  tls:
+    enabled: true
+    secretName: gateway-tls
 
-# A placeholder: use the real address of the first admin.
+# Login identifier only. The gateway and WordPress send no mail, so this address needs no mailbox.
 bootstrap:
-  adminEmail: admin@example.com
+  adminEmail: admin@urumi-rk.duckdns.org
 
 postgres:
   persistence:
@@ -58,3 +63,5 @@ postgres:
 # Step 17: NetworkPolicy on (decision 7).
 networkPolicy:
   enabled: true
+  # Traefik must reach the cert-manager solver pod in this namespace during the HTTP-01 challenge.
+  allowAcmeSolver: true

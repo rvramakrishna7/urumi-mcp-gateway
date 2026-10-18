@@ -1,19 +1,18 @@
 # Overrides for a production-like k3s VPS.
 # Use with: helm upgrade --install store charts/store -n store --create-namespace -f charts/store/values-prod.yaml
 #
-# Everything here is a placeholder until the chart is deployed to a real VPS (Step 20):
-# the domain, the sizes and the resource numbers are untested starting points.
+# The sizes and the resource numbers are untested starting points.
 # Credentials are not set here. The chart generates them inside the cluster on first install
 # (see templates/secret.yaml). To supply your own, pass them at install time with --set-file, never in this file.
 
 store:
-  # Replace with a real domain whose DNS A record points at the VPS.
-  host: store.example.com
-  # The chart does not configure Ingress TLS yet, so the scheme stays http.
-  # Switch to https only together with a TLS section on the Ingress (for example cert-manager).
-  scheme: http
+  # The DNS A record of this name points at the VPS.
+  host: store.urumi-rk.duckdns.org
+  # https goes together with wordpress.ingress.tls below.
+  scheme: https
   admin:
-    email: admin@example.com
+    # Login identifier only. The gateway and WordPress send no mail, so this address needs no mailbox.
+    email: admin@urumi-rk.duckdns.org
 
 mariadb:
   persistence:
@@ -29,6 +28,18 @@ mariadb:
       memory: 1Gi
 
 wordpress:
+  ingress:
+    # cert-manager reads the annotation, gets a certificate for store.host and keeps it in the Secret below.
+    # letsencrypt-prod issues browser-trusted certificates. A staging run (letsencrypt-staging) was done first, on 18 Oct 2026.
+    annotations:
+      cert-manager.io/cluster-issuer: letsencrypt-prod
+      # Serve the app on HTTPS only. Plain HTTP on port 80 gets a 404, so an API key, a password or a session can never
+      # cross the internet unencrypted. cert-manager's HTTP-01 challenge uses its own temporary Ingress, which is not
+      # restricted, so certificate issuance and renewal still work on port 80.
+      traefik.ingress.kubernetes.io/router.entrypoints: websecure
+    tls:
+      enabled: true
+      secretName: store-tls
   persistence:
     size: 10Gi
     storageClass: ""

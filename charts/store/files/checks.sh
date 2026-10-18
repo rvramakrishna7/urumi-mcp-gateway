@@ -30,10 +30,15 @@ log "orders created today: $(wpcli eval '$tz = wp_timezone(); $start = (new Date
 
 # The storefront must be live and every published product must appear on the shop page.
 # The request goes to the Service with the public Host header, so it does not depend on DNS or the Ingress.
+# When the store is https, Traefik ends TLS and sends X-Forwarded-Proto: https, so the test sends it too (STORE_SCHEME).
 log "storefront:"
 wpcli eval '
+$headers = "Host: " . getenv("STORE_HOST") . "\r\n";
+if (getenv("STORE_SCHEME") === "https") {
+  $headers .= "X-Forwarded-Proto: https\r\n";
+}
 $ctx = stream_context_create(array("http" => array(
-  "header" => "Host: " . getenv("STORE_HOST") . "\r\n",
+  "header" => $headers,
   "ignore_errors" => true,
   "follow_location" => 0,
 )));

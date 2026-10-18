@@ -1,0 +1,17 @@
+# Default values for the cert-issuer chart.
+# cert-manager must be installed first (deploy/cert-manager/values.yaml): this chart creates ClusterIssuer objects,
+# whose CRDs come with cert-manager, so a render or an install without it fails.
+
+# Contact address that Let's Encrypt may use for expiry notices. Empty means the field is left out.
+email: ""
+
+# The Ingress class that cert-manager puts on the temporary Ingress of an HTTP-01 challenge.
+ingressClassName: traefik
+
+staging:
+  name: letsencrypt-staging
+  server: https://acme-staging-v02.api.letsencrypt.org/directory
+
+production:
+  name: letsencrypt-prod
+  server: https://acme-v02.api.letsencrypt.org/directory

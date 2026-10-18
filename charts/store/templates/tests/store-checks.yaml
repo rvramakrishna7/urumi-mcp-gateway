@@ -59,6 +59,10 @@ spec:
           value: {{ .Values.store.admin.username | quote }}
         - name: STORE_HOST
           value: {{ required "store.host is required" .Values.store.host | quote }}
+        {{- if eq .Values.store.scheme "https" }}
+        - name: STORE_SCHEME
+          value: "https"
+        {{- end }}
         - name: WOO_MCP_USER
           value: {{ .Values.wooMcp.username | quote }}
         - name: WOO_MCP_KEY_FILE

@@ -1,0 +1,26 @@
+{{- /*
+One ClusterIssuer for each Let's Encrypt environment. The staging one issues certificates that browsers do not trust but
+has high rate limits: use it first. The account key of each issuer is stored by cert-manager in a Secret that is named
+after the issuer, in the namespace of cert-manager.
+*/ -}}
+{{- range $issuer := list .Values.staging .Values.production }}
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: {{ $issuer.name }}
+  labels:
+    {{- include "cert-issuer.labels" $ | nindent 4 }}
+spec:
+  acme:
+    server: {{ $issuer.server | quote }}
+    {{- with $.Values.email }}
+    email: {{ . | quote }}
+    {{- end }}
+    privateKeySecretRef:
+      name: {{ $issuer.name }}
+    solvers:
+      - http01:
+          ingress:
+            ingressClassName: {{ $.Values.ingressClassName }}
+---
+{{- end }}

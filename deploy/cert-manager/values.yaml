@@ -1,0 +1,11 @@
+# Values for the official cert-manager Helm chart (Let's Encrypt certificates for the Ingress of the VPS).
+# Chart: oci://quay.io/jetstack/charts/cert-manager, version v1.21.2 (the latest release on 2026-10-18).
+#
+# Install once, before the cert-issuer chart:
+#   helm upgrade --install cert-manager oci://quay.io/jetstack/charts/cert-manager \
+#     --version v1.21.2 --namespace cert-manager --create-namespace \
+#     -f deploy/cert-manager/values.yaml --wait --timeout 5m
+
+# Install the CustomResourceDefinitions (Certificate, ClusterIssuer, ...) with the chart.
+crds:
+  enabled: true
