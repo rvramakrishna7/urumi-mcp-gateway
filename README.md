@@ -2,11 +2,11 @@
 
 WooCommerce store with a team MCP gateway, deployed on Kubernetes with Helm.
 
-The local store, the WooCommerce MCP server and the gateway backend are documented so far. The rest is added as it is built and verified.
+The local cluster, the store, the three upstream MCP servers (woo-mcp, fx-mcp and fetch-mcp), the gateway with its dashboard and chat agent, and the network isolation are documented. The rest is added as it is built and verified. Follow the sections in the order they appear: each chart is installed only after the images it deploys are built and imported into the cluster.
 
 ## Local setup
 
-This section covers the store (WordPress, WooCommerce and MariaDB). It was tested on Windows 11 with WSL2, Docker Desktop (about 8 GB of memory) and Git Bash. Run the commands from the repository root.
+This section covers the cluster and the store (WordPress, WooCommerce and MariaDB). The whole setup was tested on Windows 11 with WSL2, Docker Desktop (about 8 GB of memory) and Git Bash. Run the commands from the repository root.
 
 ### Prerequisites
 
@@ -105,14 +105,22 @@ cd ../..
 
 The tests need no cluster. They use local HTTP servers and a stand-in for WooCommerce.
 
-### 2. Build the image and import it into the cluster
+### 2. Build the images and import them into the cluster
+
+The `mcp-servers` chart of step 3 deploys three servers (woo-mcp, fx-mcp and fetch-mcp), so build and import all three images first:
 
 ```bash
 docker build -t woo-mcp:0.1.1 services/woo-mcp
 k3d image import woo-mcp:0.1.1 -c urumi
+
+docker build -t fx-mcp:0.1.0 services/fx-mcp
+k3d image import fx-mcp:0.1.0 -c urumi
+
+docker build -t fetch-mcp:0.1.0 services/fetch-mcp
+k3d image import fetch-mcp:0.1.0 -c urumi
 ```
 
-The image is based on `node:24.21.0-alpine3.24`, contains only the compiled code and the production dependencies, and runs as user 10001. The chart uses `imagePullPolicy: IfNotPresent`, so the imported image is used and nothing is pulled.
+The woo-mcp image is based on `node:24.21.0-alpine3.24`, contains only the compiled code and the production dependencies, and runs as user 10001. The chart uses `imagePullPolicy: IfNotPresent`, so the imported images are used and nothing is pulled. fx-mcp and fetch-mcp are described in the section "Additional upstream servers" below.
 
 ### 3. Install the mcp-servers chart
 
@@ -131,7 +139,7 @@ helm test mcp-servers -n mcp-servers
 kubectl logs -n mcp-servers pod/woo-mcp-checks
 ```
 
-The pod should be `1/1 Running` with 0 restarts, the Service should be `ClusterIP`, and there should be no Ingress. The test pod prints PASS lines (names and counts only, never a secret): the mounted files exist, `/healthz` and `/readyz` answer, `/mcp` refuses a missing or wrong token, `tools/list` returns 5 tools, and `list_products` reaches WooCommerce.
+The woo-mcp pod should be `1/1 Running` with 0 restarts, the Service should be `ClusterIP`, and there should be no Ingress. The test pod prints PASS lines (names and counts only, never a secret): the mounted files exist, `/healthz` and `/readyz` answer, `/mcp` refuses a missing or wrong token, `tools/list` returns 5 tools, and `list_products` reaches WooCommerce.
 
 ### 4. Call the tools through a port-forward
 
@@ -171,13 +179,16 @@ The WooCommerce key comes from the store. After a rotation there (the commands a
 
 ## Gateway (gateway)
 
-The gateway keeps the list of upstream MCP servers, offers one public MCP endpoint (`/mcp`) to clients with a user API key, and writes an audit row for every tool call. Install the store and mcp-servers charts first (the sections above): the gateway chart copies the woo-mcp token from the Secret `woo-mcp-auth` and registers woo-mcp at install, and the install stops with a message if that Secret is missing. The hosts file entry for `gateway.urumi.test` is the one from step 2 of the local setup. Run the commands from the repository root. The tests of the gateway are in `services/gateway`: `npm test` needs no Docker, and `npm run test:db` starts a throwaway PostgreSQL in Docker and runs everything.
+The gateway keeps the list of upstream MCP servers, offers one public MCP endpoint (`/mcp`) to clients with a user API key, and writes an audit row for every tool call. Install the store and mcp-servers charts first (the sections above): the gateway chart copies the tokens of woo-mcp, fx-mcp and fetch-mcp from the Secrets `woo-mcp-auth`, `fx-mcp-auth` and `fetch-mcp-auth` (all three are created by the `mcp-servers` chart) and registers the three servers at install, and the install stops with a message if one of those Secrets is missing. The hosts file entry for `gateway.urumi.test` is the one from step 2 of the local setup. Run the commands from the repository root. The tests of the gateway are in `services/gateway`: `npm test` needs no Docker, and `npm run test:db` starts a throwaway PostgreSQL in Docker and runs everything.
 
 ### 1. Build the image and install the chart
 
 ```bash
 docker build -t gateway:0.11.1 services/gateway
 k3d image import gateway:0.11.1 -c urumi
+
+docker build -t dashboard:0.7.0 services/dashboard
+k3d image import dashboard:0.7.0 -c urumi
 
 helm upgrade --install gateway charts/gateway \
   --namespace gateway --create-namespace \
@@ -187,7 +198,7 @@ helm test gateway -n gateway
 kubectl logs -n gateway pod/gateway-checks
 ```
 
-The release has PostgreSQL (a StatefulSet with a persistent volume) and the gateway Deployment. A `migrate` initContainer creates the schema before the server starts. The test pod prints PASS lines (names and counts only): the database, the migrations, the tables, the seeded server `woo` with an encrypted credential, and the public routes. The Ingress routes only `/mcp`, `/healthz`, `/api/admin`, `/api/auth`, `/api/me`, `/api/audit` and `/api/chat`: `curl -i http://gateway.urumi.test/readyz` answers 404 on purpose. The values file `values-local.yaml` sets `bootstrap.adminEmail`, so the install also makes the Secret `gateway-bootstrap` (one random invite token) and the gateway creates that admin at start, without a password.
+The release has PostgreSQL (a StatefulSet with a persistent volume), the gateway Deployment and the dashboard Deployment (the static files, served by nginx). A `migrate` initContainer creates the schema before the server starts. The test pod prints PASS lines (names and counts only): the database, the migrations, the tables, the seeded server `woo` with an encrypted credential, and the public routes. The Ingress routes only `/mcp`, `/healthz`, `/api/admin`, `/api/auth`, `/api/me`, `/api/audit` and `/api/chat`: `curl -i http://gateway.urumi.test/readyz` answers 404 on purpose. The values file `values-local.yaml` sets `bootstrap.adminEmail`, so the install also makes the Secret `gateway-bootstrap` (one random invite token) and the gateway creates that admin at start, without a password.
 
 **Tool permissions.** Members cannot list or call the tools in `security.memberRestrictedTools` of `charts/gateway/values.yaml` (default `woo__create_product` and `woo__update_order_status`); admins can. `fetch__fetch` is open to members but stays in `chat.confirmTools` (every chat fetch needs a click), and the egress of fetch-mcp is limited by NetworkPolicy. Change the list in a values file and run the `helm upgrade` above. It must not be empty. Rendering the chart without a cluster (`helm template`, `helm lint`) needs `--set seed.requireExisting=false`, because the chart looks up the upstream Secrets with `lookup`.
 
@@ -364,23 +375,15 @@ npm ci
 npm run typecheck
 npm test
 cd ../..
-
-docker build -t fx-mcp:0.1.0 services/fx-mcp
-k3d image import fx-mcp:0.1.0 -c urumi
 ```
 
-The tests need no cluster and no internet: they use a fake Frankfurter server. Then run the `helm upgrade` of woo-mcp step 3 again, which creates the Deployment, the Service and the Secret `fx-mcp-auth`. The gateway seeds the server automatically under the slug `fx` (tools `fx__list_currencies`, `fx__get_rate`, `fx__convert_amounts`) with its token copied from that Secret, so run the `helm upgrade` of the gateway step 1 after it.
+The tests need no cluster and no internet: they use a fake Frankfurter server. The image `fx-mcp:0.1.0` was built and imported in woo-mcp step 2, and the `helm upgrade` of woo-mcp step 3 already created the Deployment, the Service and the Secret `fx-mcp-auth`. The gateway seeds the server automatically under the slug `fx` (tools `fx__list_currencies`, `fx__get_rate`, `fx__convert_amounts`) with its token copied from that Secret, at the `helm upgrade` of the gateway step 1. Nothing more needs to be installed for it.
 
 ### 2. fetch-mcp (fetch a URL)
 
 fetch-mcp is the reference `mcp-server-fetch` (pinned to an exact version in `services/fetch-mcp/requirements.txt`) behind `supergateway`, which serves it as Streamable HTTP. It has one tool, `fetch`, and no server code of ours.
 
-```bash
-docker build -t fetch-mcp:0.1.0 services/fetch-mcp
-k3d image import fetch-mcp:0.1.0 -c urumi
-```
-
-Run the `helm upgrade` of woo-mcp step 3 and then the one of the gateway step 1, as for fx-mcp. The gateway seeds the server under the slug `fetch`, so the tool is `fetch__fetch`. In the chat agent `fetch__fetch` is in `chat.confirmTools`: every fetch shows a confirmation card with the exact URL, and it runs only after **Run**. This is on purpose, because a fetch is also a way to send data out.
+The image `fetch-mcp:0.1.0` was built and imported in woo-mcp step 2, and the `helm upgrade` of woo-mcp step 3 already created the Deployment, the Service and the Secret `fetch-mcp-auth`, as for fx-mcp. The gateway seeds the server under the slug `fetch` at the `helm upgrade` of the gateway step 1, so the tool is `fetch__fetch`. In the chat agent `fetch__fetch` is in `chat.confirmTools`: every fetch shows a confirmation card with the exact URL, and it runs only after **Run**. This is on purpose, because a fetch is also a way to send data out.
 
 There are no unit tests of our own. The check is at image level: `services/fetch-mcp/test/ssrf-drill.mjs` calls `fetch` with loopback, private and metadata addresses, other encodings of them and redirects to them, and expects every one to be refused; it also fetches public URLs, so a drill that refuses everything is not mistaken for a pass. It needs a canary web server on a private address (port 8000, `/canary.txt` holding the marker `INTERNAL-CANARY-9f3a`) that the pod can reach. Open a port-forward in one terminal:
 
