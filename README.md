@@ -2,7 +2,35 @@
 
 WooCommerce store with a team MCP gateway, deployed on Kubernetes with Helm.
 
-The local cluster, the store, the three upstream MCP servers (woo-mcp, fx-mcp and fetch-mcp), the gateway with its dashboard and chat agent, and the network isolation are documented. The rest is added as it is built and verified. Follow the sections in the order they appear: each chart is installed only after the images it deploys are built and imported into the cluster.
+This repository contains a WooCommerce store (WordPress, WooCommerce and MariaDB), three upstream MCP servers (woo-mcp, fx-mcp and fetch-mcp), and a gateway with a React dashboard and a chat agent. Four Helm charts deploy them, on a local k3d cluster and on a single k3s VPS. The sections below run in the order they appear: each chart is installed only after the images it deploys are built and imported into the cluster.
+
+## Documentation
+
+- This README: the local setup, the production-like VPS setup and troubleshooting.
+- [docs/system-design-and-tradeoffs.md](docs/system-design-and-tradeoffs.md): the components, the main choices and their tradeoffs, routing, failure handling, local versus production, upgrades and rollback.
+- [docs/architecture.md](docs/architecture.md): the numbered design decisions and the known limitations.
+- [docs/network-policy.md](docs/network-policy.md): the NetworkPolicies and the drills that prove them.
+
+## Stand-out items attempted
+
+The numbers are those of "Other ways to stand out" in the assignment brief.
+
+| Item | Status | Where |
+|---|---|---|
+| 1 Production-like VPS deployment, with TLS | done | README, "Production-like setup (VPS)" |
+| 2 Tool permissions | done | `docs/architecture.md`, decisions 43 and 45 |
+| 6 Security hardening | partial | See below |
+| 7 Scaling | partial | A rate limit per user on the chat agent (decision 40, default 10 requests per minute) and a login throttle per email (decision 35). There is one gateway replica, and there is no rate limit on `/mcp`. |
+| 8 Observability | partial | The Servers screen shows why an upstream is unreachable, and every call has an audit row with its outcome. There are no metrics. |
+| 9 Upgrades and rollback | partial | `docs/system-design-and-tradeoffs.md`, section 6. A rollback across a migration and a rollback on the VPS were not tested. |
+| 3, 4, 5 and the multi-store bonus | not attempted | |
+
+Item 6 in detail:
+- SSRF guard for the URL of an upstream server: an exact `host:port` allowlist (`docs/architecture.md`, decision 44).
+- NetworkPolicies with a default deny in the `gateway` and `mcp-servers` namespaces. The `store` namespace has none (`docs/network-policy.md`).
+- Upstream credentials are encrypted at rest with AES-256-GCM (decision 30).
+- Non-root containers: the gateway, the dashboard, PostgreSQL, woo-mcp, fx-mcp, fetch-mcp and the `helm test` pods of the `gateway` and `mcp-servers` charts set `runAsNonRoot: true`. WordPress and MariaDB set no security context. The store bootstrap Job and the store test pod run as user 33 without `runAsNonRoot`.
+- RBAC: no component talks to the Kubernetes API, so the charts contain no ServiceAccount, Role or RoleBinding. The gateway, the dashboard, PostgreSQL and the three MCP servers do not mount a ServiceAccount token. WordPress, MariaDB and the store bootstrap Job do not set this, so they get the default token.
 
 ## Local setup
 
@@ -29,7 +57,7 @@ kubectl get nodes
 
 The node should be `Ready`. The cluster keeps the default Traefik ingress controller and the `local-path` storage class, and maps host ports 80 and 443 to Traefik.
 
-### 2. Map the store hostname
+### 2. Map the hostnames
 
 Add this line to `C:\Windows\System32\drivers\etc\hosts`. Open the file in Notepad started with "Run as administrator":
 
@@ -232,7 +260,7 @@ kubectl exec -n gateway deploy/gateway -c gateway -- node dist/cli.js user invit
 
 The new owner of the account sets the password with the accept-invite command above, with `invite.token` in place of `bootstrap.token`; delete `invite.token` afterwards.
 
-**API keys in the dashboard.** Any signed-in user, admin or member, manages their own keys at `http://gateway.urumi.test/keys` (the "API keys" link on the home page): create a key with a name, copy it from the one-time reveal (it is shown once and cannot be shown again; only its first characters are listed afterwards), and revoke it. A user can have 10 active keys; revoked keys stay in the list, marked as revoked. An MCP client uses a key at `/mcp` with the header `Authorization: Bearer <key>`. Over plain `http` (the local cluster) the "Copy key" button cannot reach the clipboard, so the screen asks you to select the key and press Ctrl+C (known limitation, fixed by TLS in Step 20).
+**API keys in the dashboard.** Any signed-in user, admin or member, manages their own keys at `http://gateway.urumi.test/keys` (the "API keys" link on the home page): create a key with a name, copy it from the one-time reveal (it is shown once and cannot be shown again; only its first characters are listed afterwards), and revoke it. A user can have 10 active keys; revoked keys stay in the list, marked as revoked. An MCP client uses a key at `/mcp` with the header `Authorization: Bearer <key>`. Over plain `http` (the local cluster) the "Copy key" button cannot reach the clipboard, so the screen asks you to select the key and press Ctrl+C (known limitation; on the VPS, which uses https, the button works).
 
 **API keys.** A signed-in user makes and revokes their own keys through `/api/me/keys` (session only, for the dashboard). For the commands in the sections below you need two key files, `admin.key` and `member.key`. The command-line tool makes a key for a user who is active; the new key is the only thing on stdout, so redirect it to a file (it is not printed) and keep the file private. The admin is active after the step above. The member is made first, with the CLI (active at once, no password; for a real member use the invite of section 5 instead):
 
@@ -266,7 +294,7 @@ npx -y @modelcontextprotocol/inspector@2.10.1 --cli http://gateway.urumi.test/mc
   --transport http --header "Authorization: Bearer $(cat member.key)" --method tools/list
 ```
 
-Both were run against this cluster: the member saw the five tools `woo__create_product`, `woo__get_order`, `woo__list_orders`, `woo__list_products` and `woo__update_order_status`, and Claude Code answered with the product names of the store. The tool names are `<server slug>__<tool>`, so two servers with a tool of the same name stay apart. A client reads the tool list once when it connects, so after a server is disabled it must reconnect to see the change; a call from an old list is refused with `Unknown tool`.
+Both were run against this cluster. A member lists every enabled tool except the restricted ones (`security.memberRestrictedTools`): the three woo tools `woo__get_order`, `woo__list_orders` and `woo__list_products`, the three fx tools `fx__list_currencies`, `fx__get_rate` and `fx__convert_amounts`, and `fetch__fetch`. An admin lists all nine, which also include `woo__create_product` and `woo__update_order_status`. Claude Code answered with the product names of the store. The tool names are `<server slug>__<tool>`, so two servers with a tool of the same name stay apart. A client reads the tool list once when it connects, so after a server is disabled it must reconnect to see the change; a call from an old list is refused with `Unknown tool`.
 
 ### 4. Register, disable and remove an upstream server
 
@@ -502,7 +530,7 @@ kubectl get pods -A
 
 ### 7. First admin, chat key and store password
 
-The first admin uses the same invite-token flow as the local setup (gateway step 2), but over https. Run the block of that step on the VPS with these two differences: use `https://gateway.<your-domain>/api/auth/accept-invite` as the URL and `Origin: https://gateway.<your-domain>`. The dashboard is then at `https://gateway.<your-domain>/`.
+The first admin uses the same invite-token flow as the local setup (gateway step 2), but over https. Run the block of that step on the VPS with these two differences: use `https://gateway.<your-domain>/api/auth/accept-invite` as the URL and `Origin: https://gateway.<your-domain>`. The dashboard is then at `https://gateway.<your-domain>/`. MCP clients use `https://gateway.<your-domain>/mcp` with the same `Authorization` header as locally.
 
 The Groq key is created with the command of gateway step 7 (`read -rsp` and `kubectl create -f -`, run on the VPS), followed by `kubectl rollout restart deploy/gateway -n gateway`.
 
@@ -531,7 +559,7 @@ An on-demand `m7i-flex.large` in `ap-southeast-2` with a 30 GiB gp3 disk and an 
 
 ## Troubleshooting
 
-**Values files are the source of truth.** Change `values-local.yaml` or `values-prod.yaml` of the chart, not the command line. Do not add `--set` flags to `helm install` or `helm upgrade`: a value that is set only on the command line is lost, or silently differs, on the next upgrade.
+**Values files are the source of truth.** Change `values-local.yaml` or `values-prod.yaml` of the chart, not the command line. Do not add `--set` flags to `helm install` or `helm upgrade`: a value that is set only on the command line is lost, or silently differs, on the next upgrade. The only exception is `--set seed.requireExisting=false` when rendering the gateway chart without a cluster (`helm template`, `helm lint`), never for install or upgrade.
 
 **SSH says "Connection timed out".** Your home IP address probably changed. Set the SSH rule of the security group to "My IP" again.
 
