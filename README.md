@@ -416,6 +416,125 @@ kubectl get networkpolicy -A
 
 The policies, the drills that prove them (with a positive control for each), the results of 17 October 2026 on the local k3d cluster, the commands to run them again and the known limitations are in [docs/network-policy.md](docs/network-policy.md).
 
+## Production-like setup (VPS)
+
+The production-like setup uses the same Helm charts as the local cluster. Only the `values-prod.yaml` file of each chart differs. The running example is one AWS EC2 `m7i-flex.large` (2 vCPU, about 8 GiB of memory) with Ubuntu 26.04 and a 30 GiB gp3 disk, k3s on a single node, an Elastic IP, DuckDNS hostnames and Let's Encrypt certificates from cert-manager. Below, `<your-domain>` is your DuckDNS domain, `<elastic-ip>` the address of the server and `<ssh-host>` the SSH alias of the server. The server is called "the VPS" in this section.
+
+### 1. Firewall, DNS and the instance
+
+Security group: port 22 only from your own IP, ports 80 and 443 from anywhere. Ports 6443 (Kubernetes API) and 10250 (kubelet) stay closed. Require IMDSv2 on the instance, set the metadata hop limit to 1 and attach no IAM role, so a compromised pod cannot read cloud credentials.
+
+DNS: create the A records `store.<your-domain>` and `gateway.<your-domain>`, both pointing at `<elastic-ip>`. Before the next steps, `nslookup store.<your-domain>` must return that address.
+
+### 2. Install k3s, Docker and Helm
+
+Run on the VPS. The cluster of this project runs k3s v1.35.5+k3s1 with secrets encryption at rest. `--write-kubeconfig-mode 600` keeps the kubeconfig readable by its owner only, so copy it to your own home and point `KUBECONFIG` at it:
+
+```bash
+curl -sfL https://get.k3s.io | INSTALL_K3S_VERSION='v1.35.5+k3s1' sh -s - server --secrets-encryption --write-kubeconfig-mode 600
+mkdir -p ~/.kube && sudo cp /etc/rancher/k3s/k3s.yaml ~/.kube/config && sudo chown "$USER" ~/.kube/config
+echo 'export KUBECONFIG=$HOME/.kube/config' >> ~/.bashrc && export KUBECONFIG=$HOME/.kube/config
+kubectl get nodes
+```
+
+Docker builds the images. Install Docker Engine from https://docs.docker.com/engine/install/ubuntu/ (`docker-ce` 29.9.1 and `containerd.io` 2.4.2 on this server). Install Helm from https://helm.sh/docs/intro/install/ (v4.3.0 on this server). The k3s Traefik controller and the `local-path` storage class are the defaults and are used as they are.
+
+### 3. Get the code
+
+Create a key pair on the VPS and add the public key to the GitHub repository as a read-only deploy key (Settings, Deploy keys, leave "Allow write access" off). The key never leaves the VPS and cannot push:
+
+```bash
+ssh-keygen -t ed25519 -f ~/.ssh/urumi-deploy -N ''
+cat ~/.ssh/urumi-deploy.pub
+GIT_SSH_COMMAND='ssh -i ~/.ssh/urumi-deploy -o IdentitiesOnly=yes' git clone git@github.com:<owner>/<repository>.git urumi-mcp-gateway
+cd urumi-mcp-gateway
+git config core.sshCommand 'ssh -i ~/.ssh/urumi-deploy -o IdentitiesOnly=yes'
+```
+
+The last command stores the key in the repository config, so a later `git pull` uses the deploy key too.
+
+Then edit the hostnames to your domain (a values file is the place for this, not `--set`). These five keys are the only ones that contain the example domain:
+
+- `charts/store/values-prod.yaml`: `store.host` and `store.admin.email`
+- `charts/mcp-servers/values-prod.yaml`: `wooMcp.store.publicUrl` (the same host as `store.host`, with `http://`)
+- `charts/gateway/values-prod.yaml`: `ingress.host` and `bootstrap.adminEmail`
+
+### 4. Build the images and import them into k3s
+
+There is no registry. The images are built on the VPS and imported into the containerd of k3s. The values files set `pullPolicy: Never`, so the kubelet uses only the imported images. The tags are the ones in the values files:
+
+```bash
+for spec in woo-mcp:0.1.1 fx-mcp:0.1.0 fetch-mcp:0.1.0 gateway:0.11.1 dashboard:0.7.0; do
+  sudo docker build -t "$spec" "services/${spec%%:*}"
+  sudo docker save "$spec" | sudo k3s ctr images import -
+done
+sudo k3s ctr images ls | grep -E 'woo-mcp|fx-mcp|fetch-mcp|gateway|dashboard'
+```
+
+The images of WordPress and MariaDB are pulled from their registries by the store chart.
+
+### 5. Certificates (cert-manager and the issuers)
+
+Install cert-manager (v1.21.2, with `crds.enabled: true`), then the `cert-issuer` chart, which creates two ClusterIssuers: `letsencrypt-staging` and `letsencrypt-prod` (HTTP-01 through Traefik). The certificates are requested by the Ingress annotations in `values-prod.yaml`, which use `letsencrypt-prod`. Let's Encrypt limits how many certificates it issues per week, so for a first run on a new domain change the annotation `cert-manager.io/cluster-issuer` in the values files to `letsencrypt-staging` (browsers do not trust it), check that the certificates become Ready, and then change it back to `letsencrypt-prod`:
+
+```bash
+helm upgrade --install cert-manager oci://quay.io/jetstack/charts/cert-manager \
+  --version v1.21.2 --namespace cert-manager --create-namespace \
+  -f deploy/cert-manager/values.yaml --wait --timeout 5m
+helm upgrade --install cert-issuer charts/cert-issuer --namespace cert-manager --wait
+```
+
+The `email` value of `cert-issuer` is optional (Let's Encrypt uses it for expiry notices). Port 80 must be reachable from the internet for the HTTP-01 challenge, also for the renewals.
+
+### 6. Install the charts
+
+The same order as local, because the gateway copies the tokens that the `mcp-servers` chart creates, and `mcp-servers` copies its key from the store. No `--set`:
+
+```bash
+helm upgrade --install store charts/store -n store --create-namespace -f charts/store/values-prod.yaml --wait --timeout 10m
+helm upgrade --install mcp-servers charts/mcp-servers -n mcp-servers --create-namespace -f charts/mcp-servers/values-prod.yaml --wait --timeout 3m
+helm upgrade --install gateway charts/gateway -n gateway --create-namespace -f charts/gateway/values-prod.yaml --wait --timeout 5m
+kubectl get certificate -A
+kubectl get pods -A
+```
+
+`store-tls` and `gateway-tls` must show `READY True`, and every pod must be `Running` or `Completed`. The checks `helm test gateway -n gateway` and `helm test mcp-servers -n mcp-servers` work as on the local cluster.
+
+### 7. First admin, chat key and store password
+
+The first admin uses the same invite-token flow as the local setup (gateway step 2), but over https. Run the block of that step on the VPS with these two differences: use `https://gateway.<your-domain>/api/auth/accept-invite` as the URL and `Origin: https://gateway.<your-domain>`. The dashboard is then at `https://gateway.<your-domain>/`.
+
+The Groq key is created with the command of gateway step 7 (`read -rsp` and `kubectl create -f -`, run on the VPS), followed by `kubectl rollout restart deploy/gateway -n gateway`.
+
+To read the WordPress admin password without printing it on the VPS or on your laptop, copy it from your laptop with the clipboard:
+
+```bash
+ssh <ssh-host> 'export KUBECONFIG=$HOME/.kube/config; kubectl get secret store-credentials -n store -o jsonpath="{.data.wordpress-admin-password}" | base64 -d' | clip
+```
+
+Paste it into the login form at `https://store.<your-domain>/wp-admin/` (user `storeadmin`), then clear the clipboard with `printf '' | clip`.
+
+### What differs from local
+
+| Topic | Local (k3d) | VPS (k3s) |
+|---|---|---|
+| Hostnames and DNS | `*.urumi.test` in the hosts file | DuckDNS A records to the Elastic IP |
+| TLS | none (http) | Let's Encrypt through cert-manager |
+| http and https | http only | https only; plain http answers 404 by design |
+| Images | built locally, `k3d image import` | built on the VPS, `k3s ctr images import`, `pullPolicy: Never` |
+| Storage class | `local-path` | `local-path` |
+| Secrets | generated in the cluster | generated in the cluster; k3s encrypts Secrets at rest (`--secrets-encryption`) |
+
+### Cost
+
+An on-demand `m7i-flex.large` in `ap-southeast-2` with a 30 GiB gp3 disk and an Elastic IP is about USD 94 per month all-in (October 2026). Set an AWS budget alert, and stop or terminate the instance when the demo is over.
+
 ## Troubleshooting
 
 **Values files are the source of truth.** Change `values-local.yaml` or `values-prod.yaml` of the chart, not the command line. Do not add `--set` flags to `helm install` or `helm upgrade`: a value that is set only on the command line is lost, or silently differs, on the next upgrade.
+
+**SSH says "Connection timed out".** Your home IP address probably changed. Set the SSH rule of the security group to "My IP" again.
+
+**A certificate stays not Ready.** Port 80 must be open to the internet for the HTTP-01 challenge. Run `kubectl describe certificate -n <namespace>` and look at the challenge with `kubectl get challenges -A`.
+
+**`http://` gives 404.** This is expected: only https is routed on the VPS. Use `https://`.
