@@ -58,11 +58,13 @@ Running the same command again is safe: the Job only changes what differs. The s
 
 ### 4. Get the admin password
 
-The password is generated inside the cluster on first install and kept in the Kubernetes Secret `store-credentials`. It is never written to Git or to logs. Read it in your own terminal:
+The password is generated inside the cluster on first install and kept in the Kubernetes Secret `store-credentials`. It is never written to Git or to logs. Copy it to the clipboard in your own terminal, so it is never printed:
 
 ```bash
-kubectl get secret store-credentials -n store -o jsonpath='{.data.wordpress-admin-password}' | base64 -d; echo
+kubectl get secret store-credentials -n store -o jsonpath='{.data.wordpress-admin-password}' | base64 -d | clip
 ```
+
+Paste it into the password manager or the login form, then clear the clipboard with `printf '' | clip`. On Linux use `xclip -selection clipboard` instead of `clip`, on macOS `pbcopy`.
 
 ### 5. Place a test order with cash on delivery
 
@@ -357,7 +359,7 @@ kubectl rollout restart deploy/gateway -n gateway
 
 The Secret is optional in the chart: without it the gateway starts normally and `POST /api/chat` answers 503 (the screen says the assistant is not set up). The key is read once at start, so a new key needs the restart above. To rotate it, delete the Secret, create it again and restart.
 
-Writes need a confirmation. The tools in `chat.confirmTools` (default `woo__create_product` and `woo__update_order_status`) never run on the model's request alone: the screen shows a card with the tool and its arguments, and the change runs only after **Run**. The server checks a signed, 5-minute token bound to the user, the tool and the arguments, so posting to the route directly does not skip the card. **Cancel** sends nothing. If a Run fails in a way that may have run the change (a lost connection, a 500), the card is removed and the screen says to check the audit log before repeating it.
+Writes need a confirmation. The tools in `chat.confirmTools` (default `woo__create_product`, `woo__update_order_status` and `fetch__fetch`) never run on the model's request alone: the screen shows a card with the tool and its arguments, and the change runs only after **Run**. The server checks a signed, 5-minute token bound to the user, the tool and the arguments, so posting to the route directly does not skip the card. **Cancel** sends nothing. If a Run fails in a way that may have run the change (a lost connection, a 500), the card is removed and the screen says to check the audit log before repeating it.
 
 A user can send `chat.ratePerMinute` requests per minute (default 10; over it the gateway answers 429 and the screen shows a countdown). Groq has its own limits: rapid successive turns can end in "The model service is busy" (see the known limitations in `docs/architecture.md`).
 
@@ -413,3 +415,7 @@ kubectl get networkpolicy -A
 ```
 
 The policies, the drills that prove them (with a positive control for each), the results of 17 October 2026 on the local k3d cluster, the commands to run them again and the known limitations are in [docs/network-policy.md](docs/network-policy.md).
+
+## Troubleshooting
+
+**Values files are the source of truth.** Change `values-local.yaml` or `values-prod.yaml` of the chart, not the command line. Do not add `--set` flags to `helm install` or `helm upgrade`: a value that is set only on the command line is lost, or silently differs, on the next upgrade.
