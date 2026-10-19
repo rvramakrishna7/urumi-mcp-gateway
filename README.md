@@ -10,6 +10,7 @@ This repository contains a WooCommerce store (WordPress, WooCommerce and MariaDB
 - [docs/system-design-and-tradeoffs.md](docs/system-design-and-tradeoffs.md): the components, the main choices and their tradeoffs, routing, failure handling, local versus production, upgrades and rollback.
 - [docs/architecture.md](docs/architecture.md): the numbered design decisions and the known limitations.
 - [docs/network-policy.md](docs/network-policy.md): the NetworkPolicies and the drills that prove them.
+- [docs/threat-model.md](docs/threat-model.md): the assets, the actors, the four questions of the brief, and the residual risks in priority order.
 
 ## Stand-out items attempted
 
