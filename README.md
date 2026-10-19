@@ -2,7 +2,35 @@
 
 WooCommerce store with a team MCP gateway, deployed on Kubernetes with Helm.
 
-The local cluster, the store, the three upstream MCP servers (woo-mcp, fx-mcp and fetch-mcp), the gateway with its dashboard and chat agent, and the network isolation are documented. The rest is added as it is built and verified. Follow the sections in the order they appear: each chart is installed only after the images it deploys are built and imported into the cluster.
+This repository contains a WooCommerce store (WordPress, WooCommerce and MariaDB), three upstream MCP servers (woo-mcp, fx-mcp and fetch-mcp), and a gateway with a React dashboard and a chat agent. Four Helm charts deploy them, on a local k3d cluster and on a single k3s VPS. The sections below run in the order they appear: each chart is installed only after the images it deploys are built and imported into the cluster.
+
+## Documentation
+
+- This README: the local setup, the production-like VPS setup and troubleshooting.
+- [docs/system-design-and-tradeoffs.md](docs/system-design-and-tradeoffs.md): the components, the main choices and their tradeoffs, routing, failure handling, local versus production, upgrades and rollback.
+- [docs/architecture.md](docs/architecture.md): the numbered design decisions and the known limitations.
+- [docs/network-policy.md](docs/network-policy.md): the NetworkPolicies and the drills that prove them.
+
+## Stand-out items attempted
+
+The numbers are those of "Other ways to stand out" in the assignment brief.
+
+| Item | Status | Where |
+|---|---|---|
+| 1 Production-like VPS deployment, with TLS | done | README, "Production-like setup (VPS)" |
+| 2 Tool permissions | done | `docs/architecture.md`, decisions 43 and 45 |
+| 6 Security hardening | partial | See below |
+| 7 Scaling | partial | A rate limit per user on the chat agent (decision 40, default 10 requests per minute) and a login throttle per email (decision 35). There is one gateway replica, and there is no rate limit on `/mcp`. |
+| 8 Observability | partial | The Servers screen shows why an upstream is unreachable, and every call has an audit row with its outcome. There are no metrics. |
+| 9 Upgrades and rollback | partial | `docs/system-design-and-tradeoffs.md`, section 6. A rollback across a migration and a rollback on the VPS were not tested. |
+| 3, 4, 5 and the multi-store bonus | not attempted | |
+
+Item 6 in detail:
+- SSRF guard for the URL of an upstream server: an exact `host:port` allowlist (`docs/architecture.md`, decision 44).
+- NetworkPolicies with a default deny in the `gateway` and `mcp-servers` namespaces. The `store` namespace has none (`docs/network-policy.md`).
+- Upstream credentials are encrypted at rest with AES-256-GCM (decision 30).
+- Non-root containers: the gateway, the dashboard, PostgreSQL, woo-mcp, fx-mcp, fetch-mcp and the `helm test` pods of the `gateway` and `mcp-servers` charts set `runAsNonRoot: true`. WordPress and MariaDB set no security context. The store bootstrap Job and the store test pod run as user 33 without `runAsNonRoot`.
+- RBAC: no component talks to the Kubernetes API, so the charts contain no ServiceAccount, Role or RoleBinding. The gateway, the dashboard, PostgreSQL and the three MCP servers do not mount a ServiceAccount token. WordPress, MariaDB and the store bootstrap Job do not set this, so they get the default token.
 
 ## Local setup
 
@@ -29,7 +57,7 @@ kubectl get nodes
 
 The node should be `Ready`. The cluster keeps the default Traefik ingress controller and the `local-path` storage class, and maps host ports 80 and 443 to Traefik.
 
-### 2. Map the store hostname
+### 2. Map the hostnames
 
 Add this line to `C:\Windows\System32\drivers\etc\hosts`. Open the file in Notepad started with "Run as administrator":
 
@@ -58,11 +86,13 @@ Running the same command again is safe: the Job only changes what differs. The s
 
 ### 4. Get the admin password
 
-The password is generated inside the cluster on first install and kept in the Kubernetes Secret `store-credentials`. It is never written to Git or to logs. Read it in your own terminal:
+The password is generated inside the cluster on first install and kept in the Kubernetes Secret `store-credentials`. It is never written to Git or to logs. Copy it to the clipboard in your own terminal, so it is never printed:
 
 ```bash
-kubectl get secret store-credentials -n store -o jsonpath='{.data.wordpress-admin-password}' | base64 -d; echo
+kubectl get secret store-credentials -n store -o jsonpath='{.data.wordpress-admin-password}' | base64 -d | clip
 ```
+
+Paste it into the password manager or the login form, then clear the clipboard with `printf '' | clip`. On Linux use `xclip -selection clipboard` instead of `clip`, on macOS `pbcopy`.
 
 ### 5. Place a test order with cash on delivery
 
@@ -230,7 +260,7 @@ kubectl exec -n gateway deploy/gateway -c gateway -- node dist/cli.js user invit
 
 The new owner of the account sets the password with the accept-invite command above, with `invite.token` in place of `bootstrap.token`; delete `invite.token` afterwards.
 
-**API keys in the dashboard.** Any signed-in user, admin or member, manages their own keys at `http://gateway.urumi.test/keys` (the "API keys" link on the home page): create a key with a name, copy it from the one-time reveal (it is shown once and cannot be shown again; only its first characters are listed afterwards), and revoke it. A user can have 10 active keys; revoked keys stay in the list, marked as revoked. An MCP client uses a key at `/mcp` with the header `Authorization: Bearer <key>`. Over plain `http` (the local cluster) the "Copy key" button cannot reach the clipboard, so the screen asks you to select the key and press Ctrl+C (known limitation, fixed by TLS in Step 20).
+**API keys in the dashboard.** Any signed-in user, admin or member, manages their own keys at `http://gateway.urumi.test/keys` (the "API keys" link on the home page): create a key with a name, copy it from the one-time reveal (it is shown once and cannot be shown again; only its first characters are listed afterwards), and revoke it. A user can have 10 active keys; revoked keys stay in the list, marked as revoked. An MCP client uses a key at `/mcp` with the header `Authorization: Bearer <key>`. Over plain `http` (the local cluster) the "Copy key" button cannot reach the clipboard, so the screen asks you to select the key and press Ctrl+C (known limitation; on the VPS, which uses https, the button works).
 
 **API keys.** A signed-in user makes and revokes their own keys through `/api/me/keys` (session only, for the dashboard). For the commands in the sections below you need two key files, `admin.key` and `member.key`. The command-line tool makes a key for a user who is active; the new key is the only thing on stdout, so redirect it to a file (it is not printed) and keep the file private. The admin is active after the step above. The member is made first, with the CLI (active at once, no password; for a real member use the invite of section 5 instead):
 
@@ -264,7 +294,7 @@ npx -y @modelcontextprotocol/inspector@2.10.1 --cli http://gateway.urumi.test/mc
   --transport http --header "Authorization: Bearer $(cat member.key)" --method tools/list
 ```
 
-Both were run against this cluster: the member saw the five tools `woo__create_product`, `woo__get_order`, `woo__list_orders`, `woo__list_products` and `woo__update_order_status`, and Claude Code answered with the product names of the store. The tool names are `<server slug>__<tool>`, so two servers with a tool of the same name stay apart. A client reads the tool list once when it connects, so after a server is disabled it must reconnect to see the change; a call from an old list is refused with `Unknown tool`.
+Both were run against this cluster. A member lists every enabled tool except the restricted ones (`security.memberRestrictedTools`): the three woo tools `woo__get_order`, `woo__list_orders` and `woo__list_products`, the three fx tools `fx__list_currencies`, `fx__get_rate` and `fx__convert_amounts`, and `fetch__fetch`. An admin lists all nine, which also include `woo__create_product` and `woo__update_order_status`. Claude Code answered with the product names of the store. The tool names are `<server slug>__<tool>`, so two servers with a tool of the same name stay apart. A client reads the tool list once when it connects, so after a server is disabled it must reconnect to see the change; a call from an old list is refused with `Unknown tool`.
 
 ### 4. Register, disable and remove an upstream server
 
@@ -357,7 +387,7 @@ kubectl rollout restart deploy/gateway -n gateway
 
 The Secret is optional in the chart: without it the gateway starts normally and `POST /api/chat` answers 503 (the screen says the assistant is not set up). The key is read once at start, so a new key needs the restart above. To rotate it, delete the Secret, create it again and restart.
 
-Writes need a confirmation. The tools in `chat.confirmTools` (default `woo__create_product` and `woo__update_order_status`) never run on the model's request alone: the screen shows a card with the tool and its arguments, and the change runs only after **Run**. The server checks a signed, 5-minute token bound to the user, the tool and the arguments, so posting to the route directly does not skip the card. **Cancel** sends nothing. If a Run fails in a way that may have run the change (a lost connection, a 500), the card is removed and the screen says to check the audit log before repeating it.
+Writes need a confirmation. The tools in `chat.confirmTools` (default `woo__create_product`, `woo__update_order_status` and `fetch__fetch`) never run on the model's request alone: the screen shows a card with the tool and its arguments, and the change runs only after **Run**. The server checks a signed, 5-minute token bound to the user, the tool and the arguments, so posting to the route directly does not skip the card. **Cancel** sends nothing. If a Run fails in a way that may have run the change (a lost connection, a 500), the card is removed and the screen says to check the audit log before repeating it.
 
 A user can send `chat.ratePerMinute` requests per minute (default 10; over it the gateway answers 429 and the screen shows a countdown). Groq has its own limits: rapid successive turns can end in "The model service is busy" (see the known limitations in `docs/architecture.md`).
 
@@ -413,3 +443,126 @@ kubectl get networkpolicy -A
 ```
 
 The policies, the drills that prove them (with a positive control for each), the results of 17 October 2026 on the local k3d cluster, the commands to run them again and the known limitations are in [docs/network-policy.md](docs/network-policy.md).
+
+## Production-like setup (VPS)
+
+The production-like setup uses the same Helm charts as the local cluster. Only the `values-prod.yaml` file of each chart differs. The running example is one AWS EC2 `m7i-flex.large` (2 vCPU, about 8 GiB of memory) with Ubuntu 26.04 and a 30 GiB gp3 disk, k3s on a single node, an Elastic IP, DuckDNS hostnames and Let's Encrypt certificates from cert-manager. Below, `<your-domain>` is your DuckDNS domain, `<elastic-ip>` the address of the server and `<ssh-host>` the SSH alias of the server. The server is called "the VPS" in this section.
+
+### 1. Firewall, DNS and the instance
+
+Security group: port 22 only from your own IP, ports 80 and 443 from anywhere. Ports 6443 (Kubernetes API) and 10250 (kubelet) stay closed. Require IMDSv2 on the instance, set the metadata hop limit to 1 and attach no IAM role, so a compromised pod cannot read cloud credentials.
+
+DNS: create the A records `store.<your-domain>` and `gateway.<your-domain>`, both pointing at `<elastic-ip>`. Before the next steps, `nslookup store.<your-domain>` must return that address.
+
+### 2. Install k3s, Docker and Helm
+
+Run on the VPS. The cluster of this project runs k3s v1.35.5+k3s1 with secrets encryption at rest. `--write-kubeconfig-mode 600` keeps the kubeconfig readable by its owner only, so copy it to your own home and point `KUBECONFIG` at it:
+
+```bash
+curl -sfL https://get.k3s.io | INSTALL_K3S_VERSION='v1.35.5+k3s1' sh -s - server --secrets-encryption --write-kubeconfig-mode 600
+mkdir -p ~/.kube && sudo cp /etc/rancher/k3s/k3s.yaml ~/.kube/config && sudo chown "$USER" ~/.kube/config
+echo 'export KUBECONFIG=$HOME/.kube/config' >> ~/.bashrc && export KUBECONFIG=$HOME/.kube/config
+kubectl get nodes
+```
+
+Docker builds the images. Install Docker Engine from https://docs.docker.com/engine/install/ubuntu/ (`docker-ce` 29.9.1 and `containerd.io` 2.4.2 on this server). Install Helm from https://helm.sh/docs/intro/install/ (v4.3.0 on this server). The k3s Traefik controller and the `local-path` storage class are the defaults and are used as they are.
+
+### 3. Get the code
+
+Create a key pair on the VPS and add the public key to the GitHub repository as a read-only deploy key (Settings, Deploy keys, leave "Allow write access" off). The key never leaves the VPS and cannot push:
+
+```bash
+ssh-keygen -t ed25519 -f ~/.ssh/urumi-deploy -N ''
+cat ~/.ssh/urumi-deploy.pub
+GIT_SSH_COMMAND='ssh -i ~/.ssh/urumi-deploy -o IdentitiesOnly=yes' git clone git@github.com:<owner>/<repository>.git urumi-mcp-gateway
+cd urumi-mcp-gateway
+git config core.sshCommand 'ssh -i ~/.ssh/urumi-deploy -o IdentitiesOnly=yes'
+```
+
+The last command stores the key in the repository config, so a later `git pull` uses the deploy key too.
+
+Then edit the hostnames to your domain (a values file is the place for this, not `--set`). These five keys are the only ones that contain the example domain:
+
+- `charts/store/values-prod.yaml`: `store.host` and `store.admin.email`
+- `charts/mcp-servers/values-prod.yaml`: `wooMcp.store.publicUrl` (the same host as `store.host`, with `http://`)
+- `charts/gateway/values-prod.yaml`: `ingress.host` and `bootstrap.adminEmail`
+
+### 4. Build the images and import them into k3s
+
+There is no registry. The images are built on the VPS and imported into the containerd of k3s. The values files set `pullPolicy: Never`, so the kubelet uses only the imported images. The tags are the ones in the values files:
+
+```bash
+for spec in woo-mcp:0.1.1 fx-mcp:0.1.0 fetch-mcp:0.1.0 gateway:0.11.1 dashboard:0.7.0; do
+  sudo docker build -t "$spec" "services/${spec%%:*}"
+  sudo docker save "$spec" | sudo k3s ctr images import -
+done
+sudo k3s ctr images ls | grep -E 'woo-mcp|fx-mcp|fetch-mcp|gateway|dashboard'
+```
+
+The images of WordPress and MariaDB are pulled from their registries by the store chart.
+
+### 5. Certificates (cert-manager and the issuers)
+
+Install cert-manager (v1.21.2, with `crds.enabled: true`), then the `cert-issuer` chart, which creates two ClusterIssuers: `letsencrypt-staging` and `letsencrypt-prod` (HTTP-01 through Traefik). The certificates are requested by the Ingress annotations in `values-prod.yaml`, which use `letsencrypt-prod`. Let's Encrypt limits how many certificates it issues per week, so for a first run on a new domain change the annotation `cert-manager.io/cluster-issuer` in the values files to `letsencrypt-staging` (browsers do not trust it), check that the certificates become Ready, and then change it back to `letsencrypt-prod`:
+
+```bash
+helm upgrade --install cert-manager oci://quay.io/jetstack/charts/cert-manager \
+  --version v1.21.2 --namespace cert-manager --create-namespace \
+  -f deploy/cert-manager/values.yaml --wait --timeout 5m
+helm upgrade --install cert-issuer charts/cert-issuer --namespace cert-manager --wait
+```
+
+The `email` value of `cert-issuer` is optional (Let's Encrypt uses it for expiry notices). Port 80 must be reachable from the internet for the HTTP-01 challenge, also for the renewals.
+
+### 6. Install the charts
+
+The same order as local, because the gateway copies the tokens that the `mcp-servers` chart creates, and `mcp-servers` copies its key from the store. No `--set`:
+
+```bash
+helm upgrade --install store charts/store -n store --create-namespace -f charts/store/values-prod.yaml --wait --timeout 10m
+helm upgrade --install mcp-servers charts/mcp-servers -n mcp-servers --create-namespace -f charts/mcp-servers/values-prod.yaml --wait --timeout 3m
+helm upgrade --install gateway charts/gateway -n gateway --create-namespace -f charts/gateway/values-prod.yaml --wait --timeout 5m
+kubectl get certificate -A
+kubectl get pods -A
+```
+
+`store-tls` and `gateway-tls` must show `READY True`, and every pod must be `Running` or `Completed`. The checks `helm test gateway -n gateway` and `helm test mcp-servers -n mcp-servers` work as on the local cluster.
+
+### 7. First admin, chat key and store password
+
+The first admin uses the same invite-token flow as the local setup (gateway step 2), but over https. Run the block of that step on the VPS with these two differences: use `https://gateway.<your-domain>/api/auth/accept-invite` as the URL and `Origin: https://gateway.<your-domain>`. The dashboard is then at `https://gateway.<your-domain>/`. MCP clients use `https://gateway.<your-domain>/mcp` with the same `Authorization` header as locally.
+
+The Groq key is created with the command of gateway step 7 (`read -rsp` and `kubectl create -f -`, run on the VPS), followed by `kubectl rollout restart deploy/gateway -n gateway`.
+
+To read the WordPress admin password without printing it on the VPS or on your laptop, copy it from your laptop with the clipboard:
+
+```bash
+ssh <ssh-host> 'export KUBECONFIG=$HOME/.kube/config; kubectl get secret store-credentials -n store -o jsonpath="{.data.wordpress-admin-password}" | base64 -d' | clip
+```
+
+Paste it into the login form at `https://store.<your-domain>/wp-admin/` (user `storeadmin`), then clear the clipboard with `printf '' | clip`.
+
+### What differs from local
+
+| Topic | Local (k3d) | VPS (k3s) |
+|---|---|---|
+| Hostnames and DNS | `*.urumi.test` in the hosts file | DuckDNS A records to the Elastic IP |
+| TLS | none (http) | Let's Encrypt through cert-manager |
+| http and https | http only | https only; plain http answers 404 by design |
+| Images | built locally, `k3d image import` | built on the VPS, `k3s ctr images import`, `pullPolicy: Never` |
+| Storage class | `local-path` | `local-path` |
+| Secrets | generated in the cluster | generated in the cluster; k3s encrypts Secrets at rest (`--secrets-encryption`) |
+
+### Cost
+
+An on-demand `m7i-flex.large` in `ap-southeast-2` with a 30 GiB gp3 disk and an Elastic IP is about USD 94 per month all-in (October 2026). Set an AWS budget alert, and stop or terminate the instance when the demo is over.
+
+## Troubleshooting
+
+**Values files are the source of truth.** Change `values-local.yaml` or `values-prod.yaml` of the chart, not the command line. Do not add `--set` flags to `helm install` or `helm upgrade`: a value that is set only on the command line is lost, or silently differs, on the next upgrade. The only exception is `--set seed.requireExisting=false` when rendering the gateway chart without a cluster (`helm template`, `helm lint`), never for install or upgrade.
+
+**SSH says "Connection timed out".** Your home IP address probably changed. Set the SSH rule of the security group to "My IP" again.
+
+**A certificate stays not Ready.** Port 80 must be open to the internet for the HTTP-01 challenge. Run `kubectl describe certificate -n <namespace>` and look at the challenge with `kubectl get challenges -A`.
+
+**`http://` gives 404.** This is expected: only https is routed on the VPS. Use `https://`.
