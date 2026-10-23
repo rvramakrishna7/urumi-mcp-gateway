@@ -529,6 +529,12 @@ kubectl get pods -A
 
 `store-tls` and `gateway-tls` must show `READY True`, and every pod must be `Running` or `Completed`. The checks `helm test gateway -n gateway` and `helm test mcp-servers -n mcp-servers` work as on the local cluster.
 
+To roll a release back, name the revision to return to (`helm history mcp-servers -n mcp-servers` lists them). A rollback does not delete the release history or the persistent volumes: it creates a new revision with the content of the old one. This was run on the VPS for the `mcp-servers` chart (see `docs/system-design-and-tradeoffs.md`, section 6):
+
+```bash
+helm rollback mcp-servers 2 -n mcp-servers --wait --timeout 3m
+```
+
 ### 7. First admin, chat key and store password
 
 The first admin uses the same invite-token flow as the local setup (gateway step 2), but over https. Run the block of that step on the VPS with these two differences: use `https://gateway.<your-domain>/api/auth/accept-invite` as the URL and `Origin: https://gateway.<your-domain>`. The dashboard is then at `https://gateway.<your-domain>/`. MCP clients use `https://gateway.<your-domain>/mcp` with the same `Authorization` header as locally.
@@ -562,7 +568,7 @@ An on-demand `m7i-flex.large` in `ap-southeast-2` with a 30 GiB gp3 disk and an 
 
 **Values files are the source of truth.** Change `values-local.yaml` or `values-prod.yaml` of the chart, not the command line. Do not add `--set` flags to `helm install` or `helm upgrade`: a value that is set only on the command line is lost, or silently differs, on the next upgrade. The only exception is `--set seed.requireExisting=false` when rendering the gateway chart without a cluster (`helm template`, `helm lint`), never for install or upgrade.
 
-**SSH says "Connection timed out".** Your home IP address probably changed. Set the SSH rule of the security group to "My IP" again.
+**SSH says "Connection timed out".** Your home IP address probably changed. Set the SSH rule of the security group to "My IP" again. SSH is restricted to the owner's IP, and reviewers only need the public HTTPS URLs.
 
 **A certificate stays not Ready.** Port 80 must be open to the internet for the HTTP-01 challenge. Run `kubectl describe certificate -n <namespace>` and look at the challenge with `kubectl get challenges -A`.
 

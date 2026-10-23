@@ -111,7 +111,8 @@ This note explains how the system is put together and why. It is a summary: ever
 - **Migrations.** They are forward-only files applied by the gateway's own runner (decision 24). Migrations 0002 to 0005 add a table, an index or a nullable column and change no existing column. The rule in decision 24 is that `helm rollback` is safe only if the migrations since then were additive, which these are; running an older image on the newer schema was not tried.
 - **Drain.** The gateway has one replica with `RollingUpdate`, and a `preStop` sleep (`gateway.preStopSleepSeconds`, default 5) lets Traefik drop the old endpoint before the pod stops (decision 46).
 - **What was exercised.** Many `helm upgrade` runs on the local cluster, and a rollback to an earlier revision during the measurements of decision 46. The preStop hook gave no failed request in 2 of 2 rollouts, against 1 to 3 in 5 of 5 without it; the sample is small and decision 46 says so.
-- **What was not.** A rollback across a migration is not recorded as tested, and no rollback on the VPS is recorded. The sleep hook needs Kubernetes 1.30 or newer (decision 46).
+- **VPS drill, 23 Oct 2026.** Chart `mcp-servers`, values only. The fx-mcp memory limit was changed from 512Mi to 640Mi in `values-prod.yaml` and applied with `helm upgrade` (helm revision 3). Then `helm rollback mcp-servers 2 -n mcp-servers --wait --timeout 3m` created revision 4, "Rollback to 2", and the limit was 512Mi again. Only the fx-mcp pod restarted each time. The servers `woo`, `fx` and `fetch` were `connected` in the gateway database after each phase. The edit was made in the VPS working tree only and was reverted with `git checkout`, so the VPS stayed at the commit of `main`.
+- **What was not.** A rollback across a migration is not recorded as tested, and neither is a rollback of the `gateway` or `store` chart. The sleep hook needs Kubernetes 1.30 or newer (decision 46).
 
 ## 7. Known limitations
 
