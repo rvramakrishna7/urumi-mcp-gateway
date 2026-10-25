@@ -14,7 +14,7 @@ This repository contains a WooCommerce store (WordPress, WooCommerce and MariaDB
 
 ## Stand-out items attempted
 
-The numbers are those of "Other ways to stand out" in the assignment brief.
+The numbers are those of "Other ways to stand out" in the assignment brief (not included in this repo).
 
 | Item | Status | Where |
 |---|---|---|

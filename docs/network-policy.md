@@ -8,7 +8,7 @@ Policies are additive. A pod that is selected by a default-deny policy can do on
 
 The private ranges below are `networkPolicy.privateRanges`: 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 127.0.0.0/8 and 169.254.0.0/16. The pod CIDR (10.42.0.0/16) and the Service CIDR (10.43.0.0/16) are inside 10.0.0.0/8.
 
-### Namespace `gateway` (chart `gateway`, 7 policies)
+### Namespace `gateway` (chart `gateway`, 7 policies locally, 8 with `values-prod.yaml`)
 
 | Policy | Selects | Rule |
 |---|---|---|
@@ -19,6 +19,8 @@ The private ranges below are `networkPolicy.privateRanges`: 10.0.0.0/8, 172.16.0
 | gateway-egress | gateway | egress to (1) the postgres pod, TCP 5432; (2) the namespace `mcp-servers`, TCP 8080; (3) `0.0.0.0/0` except the private ranges, TCP 443 (the chat model) |
 | helm-tests | test | egress to the gateway, dashboard and postgres pods, TCP 8080 and 5432 |
 | allow-from-helm-tests | gateway, dashboard | ingress from pods with component test |
+
+The eighth policy, `allow-acme-solver-from-ingress-controller`, exists only with `values-prod.yaml`: it lets the cert-manager HTTP-01 solver pod receive traffic from the ingress controller.
 
 The dashboard pod has no egress rule of its own: it gets the default deny plus DNS, and ingress from Traefik.
 
